@@ -1,0 +1,24 @@
+{
+  "info": {
+    "description": "Logistics Dataset",
+    "version": "1.0",
+    "year": 2026,
+    "sensor": "RealSense D435",
+    "calibration_file": "calib/d435_intrinsics.json",
+    "bbox_2d_format": "xywh_pixels",
+    "segmentation_format": "polygon_pixels",
+    "bbox_3d_units": "meters",
+    "bbox_3d_frame": "camera",
+    "bbox_3d_axes": {
+      "x": "right",
+      "y": "down",
+      "z": "forward"
+    },
+    "bbox_3d_center": "geometric_center",
+    "bbox_3d_rotation": {
+      "yaw": "radians_around_y_axis",
+      "rx":  "degrees_around_x_axis",
+      "rz":  "degrees_around_z_axis"
+    }
+  }
+}

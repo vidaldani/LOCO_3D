@@ -1,0 +1,30 @@
+# Binary dataset files — download separately (see README for link)
+LOCO_3D/*/images/
+LOCO_3D/*/depth_images/
+LOCO_3D/*/depth_files/
+LOCO_3D/*/point_clouds/
+
+# Raw source footage
+01_ALC/
+3D_dataset_raw/
+02_raben-logistics.zip
+03_Winkler.zip
+04_Orterer.zip
+05_rewe.zip
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pdb
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~

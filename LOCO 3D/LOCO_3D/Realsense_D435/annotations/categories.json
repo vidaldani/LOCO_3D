@@ -1,0 +1,27 @@
+[
+  {
+    "id": 1,
+    "name": "stillage",
+    "supercategory": "load_carrier"
+  },
+  {
+    "id": 2,
+    "name": "pallet_truck",
+    "supercategory": "vehicle"
+  },
+  {
+    "id": 3,
+    "name": "pallet",
+    "supercategory": "load_carrier"
+  },
+  {
+    "id": 4,
+    "name": "forklift",
+    "supercategory": "vehicle"
+  },
+  {
+    "id": 5,
+    "name": "small_load_carrier",
+    "supercategory": "container"
+  }
+]

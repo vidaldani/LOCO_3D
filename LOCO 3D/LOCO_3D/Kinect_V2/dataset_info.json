@@ -1,0 +1,25 @@
+{
+  "sensor": "Kinect V2",
+  "axes": {
+    "x": "right",
+    "y": "down",
+    "z": "forward"
+  },
+  "depth_unit": "mm",
+  "depth_format": "uint16_npy",
+  "image_size": [
+    1920,
+    1080
+  ],
+  "depth_size": [
+    512,
+    424
+  ],
+  "source_folders": [
+    "01",
+    "02",
+    "03",
+    "04",
+    "05"
+  ]
+}
