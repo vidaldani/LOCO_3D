@@ -69,24 +69,22 @@ FIELD_LABELS = [
     "rot x",       "rot y",      "rot z",
 ]
 
-DROPDOWN_OPTIONS = ["pallet", "KLT small", "KLT large", "stillage", "forklift", "pallet truck", "Custom..."]
+DROPDOWN_OPTIONS = ["pallet", "small load carrier", "stillage", "forklift", "pallet truck", "Custom..."]
 
 DROPDOWN_NAME_MAP = {
-    "pallet":       "pallet",
-    "KLT small":    "klt",
-    "KLT large":    "klt",
-    "stillage":     "stillage",
-    "forklift":     "forklift",
-    "pallet truck": "pallet truck",
+    "pallet":             "pallet",
+    "small load carrier": "small_load_carrier",
+    "stillage":           "stillage",
+    "forklift":           "forklift",
+    "pallet truck":       "pallet truck",
 }
 
 DEFAULT_DIMENSIONS = {
-    "pallet":       {"length": 1.200, "width": 0.800, "height": 0.144},
-    "KLT small":    {"length": 0.400, "width": 0.300, "height": 0.147},
-    "KLT large":    {"length": 0.600, "width": 0.400, "height": 0.147},
-    "stillage":     {"length": 1.200, "width": 0.800, "height": 0.970},
-    "forklift":     {"length": 2.800, "width": 1.300, "height": 2.150},
-    "pallet truck": {"length": 1.800, "width": 0.550, "height": 1.200},
+    "pallet":             {"length": 1.200, "width": 0.800, "height": 0.144},
+    "small load carrier": {"length": 0.400, "width": 0.300, "height": 0.147},
+    "stillage":           {"length": 1.200, "width": 0.800, "height": 0.970},
+    "forklift":           {"length": 2.800, "width": 1.300, "height": 2.150},
+    "pallet truck":       {"length": 1.800, "width": 0.550, "height": 1.200},
 }
 
 
