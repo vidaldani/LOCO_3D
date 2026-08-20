@@ -19,18 +19,49 @@ LOCO_3D/
 │
 └── LOCO_3D/
     ├── Kinect_V2/
-    │   ├── images/             # RGB frames (.png, 1920×1080)
-    │   ├── depth_files/        # Raw depth arrays (.npy, uint16 mm, 512×424)
-    │   ├── depth_images/       # Depth visualisations (.png)
-    │   ├── point_clouds/       # Coloured point clouds (.pcd)
-    │   ├── annotations/        # COCO-style JSON labels (one file per frame)
-    │   ├── calib/              # Camera intrinsics JSON
-    │   └── dataset_info.json
+    │   ├── images/             # RGB frames (.png, 1920×1080)          ← download separately
+    │   ├── depth_files/        # Raw depth arrays (.npy, uint16 mm)    ← download separately
+    │   ├── depth_images/       # Depth visualisations (.png)           ← download separately
+    │   ├── point_clouds/       # Coloured point clouds (.pcd)          ← download separately
+    │   ├── annotations/        # COCO-style JSON labels  ✓ in git
+    │   ├── calib/              # Camera intrinsics JSON  ✓ in git
+    │   └── dataset_info.json                             ✓ in git
     └── Realsense_D435/
         └── ...                 # same structure as Kinect_V2
 ```
 
 > **Raw footage** (the original `.zip` video archives, ~39 GB) and the unprocessed `3D_dataset_raw/` folder are excluded from this repository — contact the maintainer if you need them.
+
+---
+
+## Dataset download
+
+The binary sensor data (~10 GB) is not stored in this git repository. Download it from LRZ Sync+Share and place it inside `LOCO_3D/`:
+
+**[⬇ Download LOCO\_3D binary dataset — LRZ Sync+Share](#)**
+*(link to be provided by the project maintainer — contact [danielvidalsoroa@gmail.com](mailto:danielvidalsoroa@gmail.com))*
+
+After downloading, extract so that the folder structure matches the tree above. For example:
+
+```
+loco-3d/
+└── LOCO_3D/
+    ├── Kinect_V2/
+    │   ├── images/        ← extracted here
+    │   ├── depth_files/   ← extracted here
+    │   ├── depth_images/  ← extracted here
+    │   └── point_clouds/  ← extracted here (or regenerate, see below)
+    └── Realsense_D435/
+        ├── images/
+        ├── depth_files/
+        └── point_clouds/
+```
+
+> **Regenerating point clouds** — point clouds can be recreated from the depth files if needed (saves ~5 GB):
+> ```bash
+> python3 annotator/migrate_dataset.py --generate-pcd LOCO_3D/Kinect_V2
+> python3 annotator/migrate_dataset.py --generate-pcd LOCO_3D/Realsense_D435
+> ```
 
 ---
 
@@ -83,12 +114,16 @@ pip install \
 
 > On Linux you may also need `apt install libgl1 libxcb-xinerama0` if PyQt5 complains about missing display libraries.
 
-### 3 — Clone and enter the repo
+### 3 — Clone the repo
 
 ```bash
 git clone git@gitlab.lrz.de:00000000014B7825/loco-3d.git
 cd loco-3d
 ```
+
+### 4 — Download the binary dataset
+
+The git repo contains annotations and code only. Download the sensor images and depth files from the link in the [Dataset download](#dataset-download) section above and extract them so that `LOCO_3D/Kinect_V2/images/`, `LOCO_3D/Kinect_V2/depth_files/`, etc. exist inside the cloned folder.
 
 ---
 
