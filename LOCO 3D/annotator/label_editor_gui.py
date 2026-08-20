@@ -6,6 +6,7 @@ import copy
 import random
 import hashlib
 import datetime
+import subprocess
 import cv2
 
 # Allow sibling-module imports (pose_estimation_pipeline, auto_bbox_dialog)
@@ -1501,6 +1502,129 @@ class _AutoBBoxProgressDialog(QDialog):
 
 
 # ---------------------------------------------------------------------------
+# Git sync helpers
+# ---------------------------------------------------------------------------
+
+def _git_root() -> str | None:
+    """Return the repo root that contains this file, or None if not in a git repo."""
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+            capture_output=True, text=True, timeout=5,
+        )
+        return r.stdout.strip() if r.returncode == 0 else None
+    except Exception:
+        return None
+
+
+class _GitRun:
+    """Helper: run git commands rooted at a given directory."""
+    def __init__(self, root: str):
+        self.root = root
+
+    def __call__(self, *args, timeout=30) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-C", self.root] + list(args),
+            capture_output=True, text=True, timeout=timeout,
+        )
+
+
+class GitPullWorker(QThread):
+    """Fetch and fast-forward pull on startup. Runs in a background thread."""
+    done = pyqtSignal(str, bool)   # (message, is_error)
+
+    def __init__(self, root: str, parent=None):
+        super().__init__(parent)
+        self._git = _GitRun(root)
+
+    def run(self):
+        try:
+            if not self._git("remote").stdout.strip():
+                return   # no remote → nothing to do, stay silent
+
+            r = self._git("fetch", "--quiet", timeout=30)
+            if r.returncode != 0:
+                self.done.emit(f"Git fetch failed: {r.stderr.strip()}", True)
+                return
+
+            # Commits remote is ahead of us
+            r = self._git("rev-list", "HEAD..@{u}", "--count")
+            ahead = int(r.stdout.strip() or "0") if r.returncode == 0 else 0
+            if ahead == 0:
+                self.done.emit("Git: already up to date.", False)
+                return
+
+            # Check for local uncommitted changes that would block a pull
+            local_dirty = bool(self._git("status", "--porcelain").stdout.strip())
+            if local_dirty:
+                self.done.emit(
+                    f"Git: remote has {ahead} new commit(s) but you have uncommitted local "
+                    "changes.\nCommit and push your work first, then pull manually.",
+                    True,
+                )
+                return
+
+            r = self._git("pull", "--ff-only", timeout=60)
+            if r.returncode == 0:
+                self.done.emit(f"Git: pulled {ahead} new commit(s).", False)
+            elif "CONFLICT" in r.stdout + r.stderr:
+                self.done.emit(
+                    "Git pull produced conflicts.\n"
+                    "Please resolve them manually in a terminal, then reopen the app.",
+                    True,
+                )
+            else:
+                self.done.emit(f"Git pull failed:\n{r.stderr.strip()}", True)
+
+        except subprocess.TimeoutExpired:
+            self.done.emit("Git sync timed out — check your network.", True)
+        except Exception as e:
+            self.done.emit(f"Git sync error: {e}", True)
+
+
+class GitCommitPushWorker(QThread):
+    """Stage all annotation changes, commit with a message, and push."""
+    progress = pyqtSignal(str)
+    done = pyqtSignal(bool, str)   # (success, message)
+
+    def __init__(self, root: str, message: str, parent=None):
+        super().__init__(parent)
+        self._git = _GitRun(root)
+        self._message = message
+
+    def run(self):
+        try:
+            self.progress.emit("Staging changes…")
+            # Stage everything under LOCO 3D/LOCO_3D (annotations + any other tracked files)
+            r = self._git("add", "--", "LOCO 3D/LOCO_3D/")
+            if r.returncode != 0:
+                self.done.emit(False, f"git add failed:\n{r.stderr.strip()}")
+                return
+
+            self.progress.emit("Committing…")
+            r = self._git("commit", "-m", self._message)
+            if r.returncode != 0:
+                if "nothing to commit" in r.stdout + r.stderr:
+                    self.done.emit(True, "Nothing to commit — already up to date.")
+                    return
+                self.done.emit(False, f"git commit failed:\n{r.stderr.strip()}")
+                return
+
+            self.progress.emit("Pushing to remote…")
+            r = self._git("push", timeout=90)
+            if r.returncode == 0:
+                self.done.emit(True, "Annotations committed and pushed successfully.")
+            else:
+                self.done.emit(False, f"git push failed:\n{r.stderr.strip()}")
+
+        except subprocess.TimeoutExpired:
+            self.done.emit(False, "Git operation timed out.")
+        except Exception as e:
+            self.done.emit(False, f"Git error: {e}")
+
+
+# ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
 class LabelEditorWindow(QMainWindow):
@@ -1537,12 +1661,17 @@ class LabelEditorWindow(QMainWindow):
         self._coco_frame_cache:   dict = {}            # frame_id → loaded frame doc
         self._all_frame_files:    list = []            # full sorted list of pcd/ply filenames
 
+        self._git_root: str | None = _git_root()
+        self._git_pull_worker: GitPullWorker | None = None
+
         self.setWindowTitle("3D Label Editor")
         self.resize(1500, 900)
         self._build_ui()
+        self.statusBar().showMessage("Ready")
         # Defer until after the main window is shown so modal dialogs have a visible parent.
         from PyQt5.QtCore import QTimer
         QTimer.singleShot(0, self._auto_load_last_project)
+        QTimer.singleShot(200, self._start_git_pull)
 
     def _auto_load_last_project(self):
         recent = self._cfg.get("recent_projects", [])
@@ -3872,6 +4001,70 @@ class LabelEditorWindow(QMainWindow):
                 new_state = Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked
                 item.setCheckState(new_state)
 
+    # -----------------------------------------------------------------------
+    # Git sync
+    # -----------------------------------------------------------------------
+
+    def _start_git_pull(self):
+        if not self._git_root:
+            return
+        self.statusBar().showMessage("Git: checking for updates…")
+        self._git_pull_worker = GitPullWorker(self._git_root, parent=self)
+        self._git_pull_worker.done.connect(self._on_git_pull_done)
+        self._git_pull_worker.start()
+
+    def _on_git_pull_done(self, message: str, is_error: bool):
+        self.statusBar().showMessage(message, 8000)
+        if is_error:
+            QMessageBox.warning(self, "Git sync", message)
+
+    def _git_has_annotation_changes(self) -> bool:
+        """Return True if there are staged/unstaged changes under LOCO_3D/."""
+        if not self._git_root:
+            return False
+        try:
+            git = _GitRun(self._git_root)
+            r = git("status", "--porcelain", "--", "LOCO 3D/LOCO_3D/")
+            return bool(r.stdout.strip())
+        except Exception:
+            return False
+
+    def _run_git_commit_push(self):
+        """Show a blocking progress dialog while committing and pushing."""
+        user = self._current_user or {}
+        username = user.get("username", "annotator")
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        msg = f"Update annotations [{timestamp}] ({username})"
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Git — committing…")
+        dlg.setFixedWidth(400)
+        layout = QVBoxLayout(dlg)
+        status_label = QLabel("Starting…")
+        layout.addWidget(status_label)
+        bar = QProgressBar()
+        bar.setRange(0, 0)   # indeterminate
+        layout.addWidget(bar)
+        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowCloseButtonHint)
+
+        worker = GitCommitPushWorker(self._git_root, msg, parent=self)
+        worker.progress.connect(status_label.setText)
+        worker.done.connect(lambda ok, m: (
+            dlg.accept() if ok else (
+                status_label.setText(m),
+                bar.setRange(0, 1),
+                bar.setValue(0),
+            )
+        ))
+        worker.done.connect(lambda ok, m: (
+            QMessageBox.information(dlg, "Git", m) if ok
+            else QMessageBox.warning(dlg, "Git error", m)
+        ))
+        worker.start()
+        dlg.exec_()
+
+    # -----------------------------------------------------------------------
+
     def showEvent(self, event):
         super().showEvent(event)
         h = self._right_splitter.height()
@@ -4363,6 +4556,20 @@ class LabelEditorWindow(QMainWindow):
                 return
             if reply == QMessageBox.Save:
                 self._on_save()
+
+        if self._git_root and self._git_has_annotation_changes():
+            reply = QMessageBox.question(
+                self, "Commit annotations",
+                "You have uncommitted annotation changes.\n"
+                "Commit and push them to git before closing?",
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+            )
+            if reply == QMessageBox.Cancel:
+                event.ignore()
+                return
+            if reply == QMessageBox.Yes:
+                self._run_git_commit_push()
+
         self.plotter.close()
         super().closeEvent(event)
 
