@@ -39,7 +39,7 @@ LOCO_3D/
 The binary sensor data (~10 GB) is not stored in this git repository. Download it from LRZ Sync+Share and place it inside `LOCO_3D/`:
 
 **[⬇ Download LOCO\_3D binary dataset — LRZ Sync+Share](#)**
-*(link to be provided by the project maintainer — contact [danielvidalsoroa@gmail.com](mailto:danielvidalsoroa@gmail.com))*
+*(link to be provided by the project maintainer — contact [daniel.vidal@tum.de](mailto:daniel.vidal@tum.de))*
 
 After downloading, extract so that the folder structure matches the tree above. For example:
 
@@ -278,4 +278,4 @@ See each sensor's `dataset_info.json` for depth units and image resolution.
 
 ## Contact
 
-Daniel Vidal · [danielvidalsoroa@gmail.com](mailto:danielvidalsoroa@gmail.com)
+Daniel Vidal · [daniel.vidal@tum.de](mailto:daniel.vidal@tum.de)
