@@ -117,8 +117,8 @@ pip install \
 ### 3 — Clone the repo
 
 ```bash
-git clone git@gitlab.lrz.de:00000000014B7825/loco-3d.git
-cd loco-3d
+git clone https://github.com/vidaldani/LOCO_3D.git
+cd LOCO_3D
 ```
 
 ### 4 — Download the binary dataset
