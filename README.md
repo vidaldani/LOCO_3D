@@ -207,18 +207,22 @@ The app can propose a 3D bounding box automatically using the YOLOv11 segmentati
 
 ### Saving and sharing annotations
 
-Annotations are saved as JSON files in `LOCO_3D/<sensor>/annotations/`, one file per frame. After annotating a session, commit and push:
+Annotations are saved as JSON files in `LOCO_3D/<sensor>/annotations/`, one file per frame.
+
+The app handles git sync automatically:
+
+- **On startup** — the app fetches the remote and pulls any new commits from teammates automatically. If your local copy has uncommitted changes that would block the pull, a warning dialog explains what to do.
+- **On exit** — if you have unsaved annotation changes, the app asks *"Commit and push to git before closing?"*. Clicking **Yes** stages, commits (with an auto-generated message including your username and timestamp), and pushes in one step.
+
+> If two annotators work at the same time and one pushes first, the second person's push will be rejected. In that case: choose **No** at the exit prompt, run `git pull` in a terminal, then reopen the app. The next exit will push cleanly.
+
+If you ever need to sync manually:
 
 ```bash
+git pull                                          # get teammates' work
 git add LOCO_3D/Kinect_V2/annotations/
-git commit -m "annotate frames 010002–010050 (Kinect_V2)"
+git commit -m "annotate frames 010002–010050"
 git push
-```
-
-Pull the latest annotations from your teammates before starting a session:
-
-```bash
-git pull
 ```
 
 ---
