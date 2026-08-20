@@ -186,8 +186,7 @@ The application opens a project manager. On first launch you will be asked to cr
 > | KLT large | 0.600 | 0.400 | 0.147 |
 > | Stillage | 1.200 | 0.800 | 0.970 |
 > | Forklift | 2.800 | 1.300 | 2.150 |
-> | Pallet truck | 1.375–2.200 | 0.550–1.000 | 1.000–1.200 |
-> | Small load carrier | 0.400–0.600 | 0.300–0.400 | 0.147 |
+> | Pallet truck | 1.800 | 0.550 | 1.200 |
 
 ### Automatic 3D bounding box generation
 
