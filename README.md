@@ -6,28 +6,32 @@ Dataset and annotation tooling for 3D bounding box labelling of logistics object
 
 ## Repository structure
 
+After cloning, the folder layout looks like this:
+
 ```
-LOCO_3D/
-├── annotator/                  # 3D label editor application (run this)
-│   ├── label_editor_gui.py     # main entry point
-│   ├── auto_bbox_dialog.py     # automatic 3D BB generation dialog
-│   ├── pose_estimation_pipeline.py
-│   ├── mask_edit_dialog.py
-│   ├── migrate_dataset.py
-│   └── models/
-│       └── best.pt             # YOLOv11-Seg weights for auto-detection
-│
-└── LOCO_3D/
-    ├── Kinect_V2/
-    │   ├── images/             # RGB frames (.png, 1920×1080)          ← download separately
-    │   ├── depth_files/        # Raw depth arrays (.npy, uint16 mm)    ← download separately
-    │   ├── depth_images/       # Depth visualisations (.png)           ← download separately
-    │   ├── point_clouds/       # Coloured point clouds (.pcd)          ← download separately
-    │   ├── annotations/        # COCO-style JSON labels  ✓ in git
-    │   ├── calib/              # Camera intrinsics JSON  ✓ in git
-    │   └── dataset_info.json                             ✓ in git
-    └── Realsense_D435/
-        └── ...                 # same structure as Kinect_V2
+LOCO_3D/                        ← clone root
+├── README.md
+└── LOCO 3D/                    ← project folder
+    ├── annotator/              # 3D label editor application (run this)
+    │   ├── label_editor_gui.py # main entry point
+    │   ├── auto_bbox_dialog.py
+    │   ├── pose_estimation_pipeline.py
+    │   ├── mask_edit_dialog.py
+    │   ├── migrate_dataset.py
+    │   └── models/
+    │       └── best.pt         # YOLOv11-Seg weights for auto-detection
+    │
+    └── LOCO_3D/                # dataset
+        ├── Kinect_V2/
+        │   ├── images/         # RGB frames (.png, 1920×1080)       ← download separately
+        │   ├── depth_files/    # Raw depth arrays (.npy, uint16 mm) ← download separately
+        │   ├── depth_images/   # Depth visualisations (.png)        ← download separately
+        │   ├── point_clouds/   # Coloured point clouds (.pcd)       ← download separately
+        │   ├── annotations/    # COCO-style JSON labels  ✓ in git
+        │   ├── calib/          # Camera intrinsics JSON  ✓ in git
+        │   └── dataset_info.json                        ✓ in git
+        └── Realsense_D435/
+            └── ...             # same structure as Kinect_V2
 ```
 
 > **Raw footage** (the original `.zip` video archives, ~39 GB) and the unprocessed `3D_dataset_raw/` folder are excluded from this repository — contact the maintainer if you need them.
@@ -41,24 +45,26 @@ The binary sensor data (~10 GB) is not stored in this git repository. Download i
 **[⬇ Download LOCO\_3D binary dataset — LRZ Sync+Share](#)**
 *(link to be provided by the project maintainer — contact [daniel.vidal@tum.de](mailto:daniel.vidal@tum.de))*
 
-After downloading, extract so that the folder structure matches the tree above. For example:
+After downloading, extract the contents so the binary folders sit inside `LOCO 3D/LOCO_3D/`:
 
 ```
-loco-3d/
-└── LOCO_3D/
-    ├── Kinect_V2/
-    │   ├── images/        ← extracted here
-    │   ├── depth_files/   ← extracted here
-    │   ├── depth_images/  ← extracted here
-    │   └── point_clouds/  ← extracted here (or regenerate, see below)
-    └── Realsense_D435/
-        ├── images/
-        ├── depth_files/
-        └── point_clouds/
+LOCO_3D/               ← clone root
+└── LOCO 3D/
+    └── LOCO_3D/
+        ├── Kinect_V2/
+        │   ├── images/        ← extracted here
+        │   ├── depth_files/   ← extracted here
+        │   ├── depth_images/  ← extracted here
+        │   └── point_clouds/  ← extracted here (or regenerate, see below)
+        └── Realsense_D435/
+            ├── images/
+            ├── depth_files/
+            └── point_clouds/
 ```
 
 > **Regenerating point clouds** — point clouds can be recreated from the depth files if needed (saves ~5 GB):
 > ```bash
+> cd "LOCO 3D"
 > python3 annotator/migrate_dataset.py --generate-pcd LOCO_3D/Kinect_V2
 > python3 annotator/migrate_dataset.py --generate-pcd LOCO_3D/Realsense_D435
 > ```
@@ -130,11 +136,11 @@ The git repo contains annotations and code only. Download the sensor images and 
 ## Running the annotator
 
 ```bash
-cd annotator
+cd "LOCO 3D/annotator"
 python3 label_editor_gui.py
 ```
 
-The application opens a project manager. On first launch you will be asked to create or open a project — point it at the dataset sensor folder you want to annotate (e.g. `LOCO_3D/Kinect_V2`).
+The application opens a project manager. On first launch you will be asked to create or open a project — point it at the dataset sensor folder you want to annotate.
 
 ---
 
@@ -146,7 +152,7 @@ The application opens a project manager. On first launch you will be asked to cr
 2. Click **New Project** (or **Open Project** if you already have one).
 3. Set the **Sensor folder** to the dataset directory, e.g.:
    ```
-   /path/to/loco-3d/LOCO_3D/Kinect_V2
+   /path/to/LOCO_3D/LOCO 3D/LOCO_3D/Kinect_V2
    ```
    The app will find `images/`, `depth_files/`, `point_clouds/`, and `annotations/` automatically.
 4. The frame list on the left populates. Frames with existing annotations show a status indicator.
@@ -219,8 +225,8 @@ The app handles git sync automatically:
 If you ever need to sync manually:
 
 ```bash
-git pull                                          # get teammates' work
-git add LOCO_3D/Kinect_V2/annotations/
+git pull                                                    # get teammates' work
+git add "LOCO 3D/LOCO_3D/Kinect_V2/annotations/"
 git commit -m "annotate frames 010002–010050"
 git push
 ```
