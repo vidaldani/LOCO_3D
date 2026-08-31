@@ -3861,6 +3861,9 @@ class LabelEditorWindow(QMainWindow):
                     self._on_image_ctrl_clicked(event.pos())
                 else:
                     self._on_image_clicked(event.pos())
+            elif event.button() == Qt.RightButton:
+                self._on_image_right_click(event.pos())
+                return True
         if obj is self.object_list.viewport() and event.type() == QEvent.MouseButtonPress:
             if event.button() == Qt.LeftButton and (event.modifiers() & Qt.ControlModifier):
                 item = self.object_list.itemAt(event.pos())
@@ -4016,6 +4019,65 @@ class LabelEditorWindow(QMainWindow):
             if item is not None:
                 new_state = Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked
                 item.setCheckState(new_state)
+
+    def _on_image_right_click(self, pos):
+        """Right-click on the RGB preview: select the mask under the cursor, then show Copy/Paste pose menu."""
+        from PyQt5.QtWidgets import QMenu
+        if (self._orig_pixmap is None or self._orig_pixmap.isNull()
+                or not self.current_frame_id):
+            return
+
+        # Select the object under the cursor (reuse left-click logic)
+        self._on_image_clicked(pos)
+
+        row = self.object_list.currentRow()
+        if row < 0 or row >= len(self.current_objects):
+            return
+
+        self._sync_active()
+        obj = self.current_objects[row]
+        cen  = obj.get("centroid",  {})
+        rots = obj.get("rotations", {})
+
+        menu = QMenu(self)
+        copy_act  = menu.addAction("Copy pose (X, Z, Yaw)")
+        paste_act = menu.addAction("Paste pose (X, Z, Yaw)")
+        paste_act.setEnabled(self._copied_pose is not None)
+
+        action = menu.exec_(self._image_label.mapToGlobal(pos))
+        if action is None:
+            return
+
+        if action is copy_act:
+            self._copied_pose = {
+                "x":   cen.get("x",  0.0),
+                "z":   cen.get("z",  0.0),
+                "yaw": rots.get("y", 0.0),
+            }
+            self._update_status(
+                f"Copied pose from [{row}] {obj.get('name','')}: "
+                f"X={self._copied_pose['x']:.3f}, Z={self._copied_pose['z']:.3f}, "
+                f"Yaw={self._copied_pose['yaw']:.1f}°"
+            )
+
+        elif action is paste_act and self._copied_pose is not None:
+            obj["centroid"]["x"]  = self._copied_pose["x"]
+            obj["centroid"]["z"]  = self._copied_pose["z"]
+            obj["rotations"]["y"] = self._copied_pose["yaw"]
+            self.object_list.setCurrentRow(row)
+            self._clear_active_widget()
+            widget = ObjectFieldWidget(row, obj, on_change=self._on_regenerate)
+            self._fields_layout.addWidget(widget)
+            self._active_widget = widget
+            self._selected_obj_idx = row
+            self._3d_bb_manually_touched = True
+            self._dirty = True
+            self._render_scene()
+            self._update_status(
+                f"Pasted pose to [{row}] {obj.get('name','')}: "
+                f"X={self._copied_pose['x']:.3f}, Z={self._copied_pose['z']:.3f}, "
+                f"Yaw={self._copied_pose['yaw']:.1f}°"
+            )
 
     # -----------------------------------------------------------------------
     # Git sync
