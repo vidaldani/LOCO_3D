@@ -4,17 +4,12 @@
     "description": "3D bounding box annotations of logistics objects (pallets, small load carriers, stillages, forklifts, pallet trucks) captured with an Intel RealSense D435 in real warehouse environments.",
     "version": "1.0",
     "year": 2026,
-    "license": "Contact maintainer for usage terms"
-  },
-  "project": {
     "maintainer": "Daniel Vidal",
     "email": "daniel.vidal@tum.de",
-    "institution": "Technical University of Munich (TUM)",
-    "repository": "https://github.com/vidaldani/LOCO_3D"
+    "institution": "Technical University of Munich (TUM)"
   },
   "annotators": [
     {
-      "username": "dan.vidal",
       "name": "Daniel Vidal",
       "email": "daniel.vidal@tum.de",
       "role": "admin"
