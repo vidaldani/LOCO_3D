@@ -195,7 +195,7 @@ def estimate_3d_pose(depth_crop, mask_crop, x1, y1, fx, fy, cx, cy,
         class_dims_range: optional ((L_min, L_max), (W_min, W_max), H) tuple.
                     Like class_dims but clamps the measured footprint to the
                     valid range instead of snapping to a fixed size.  Use for
-                    object classes that come in multiple sizes (e.g. KLT
+                    object classes that come in multiple sizes (e.g. small_load_carrier
                     containers).  Takes precedence over class_dims.
 
     Returns:

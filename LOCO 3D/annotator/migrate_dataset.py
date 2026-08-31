@@ -37,7 +37,7 @@ CATEGORIES = [
     {"id": 2, "name": "pallet_truck", "supercategory": "vehicle"},
     {"id": 3, "name": "pallet",       "supercategory": "load_carrier"},
     {"id": 4, "name": "forklift",     "supercategory": "vehicle"},
-    {"id": 5, "name": "klt",          "supercategory": "container"},
+    {"id": 5, "name": "small_load_carrier", "supercategory": "container"},
 ]
 NAME_TO_CAT = {c["name"]: c["id"] for c in CATEGORIES}
 OLD_CLASS_IDX_TO_NAME = {0: "stillage", 1: "pallet", 2: "pallet_truck"}

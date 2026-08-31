@@ -32,11 +32,10 @@ from pose_estimation_pipeline import (
 
 # Known class dimensions (L, W, H) in metres — must match DROPDOWN_OPTIONS in label_editor_gui.py
 _CLASS_DIMS: dict[str, tuple[float, float, float]] = {
-    "pallet":        (1.200, 0.800, 0.144),
-    "KLT small":     (0.400, 0.300, 0.147),
-    "KLT large":     (0.600, 0.400, 0.147),
-    "stillage":      (1.200, 0.800, 0.970),
-    "forklift":      (2.800, 1.300, 2.150),
+    "pallet":             (1.200, 0.800, 0.144),
+    "small_load_carrier": (0.400, 0.300, 0.147),
+    "stillage":           (1.200, 0.800, 0.970),
+    "forklift":           (2.800, 1.300, 2.150),
 }
 
 # Classes whose footprint is bounded but not fixed.
@@ -44,8 +43,7 @@ _CLASS_DIMS: dict[str, tuple[float, float, float]] = {
 # H may be a float (upper cap, measured value kept when shorter)
 # or a (H_min, H_max) tuple (measured height clamped to the range).
 _CLASS_DIMS_RANGE: dict[str, tuple] = {
-    "small_load_carrier": ((0.400, 0.600), (0.300, 0.400), 0.147),
-    "pallet truck":       ((1.375, 2.200), (0.550, 1.000), (1.000, 1.200)),
+    "small_load_carrier": ((0.400, 0.600), (0.300, 0.400), (0.001, 10.0)),
     "pallet_truck":       ((1.375, 2.200), (0.550, 1.000), (1.000, 1.200)),
 }
 
