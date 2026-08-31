@@ -4290,7 +4290,24 @@ class LabelEditorWindow(QMainWindow):
 
         labels_dir_cap = self.labels_dir
 
-        # Check whether any target frames already have predictions
+        # Check whether any target frames already have annotations.
+        # Frames marked manually_modified are ALWAYS skipped — never overwrite human work.
+        _manually_annotated = [
+            fid for fid in frame_ids
+            if self._frame_meta(fid).get("manually_modified")
+        ]
+        if _manually_annotated:
+            frame_ids = [fid for fid in frame_ids if fid not in _manually_annotated]
+            _nm = len(_manually_annotated)
+            QMessageBox.information(
+                self, "Skipping manually annotated frames",
+                f"{_nm} frame{'s' if _nm > 1 else ''} {'have' if _nm > 1 else 'has'} "
+                "manual annotations and will be skipped.\n\n"
+                "To re-run auto-annotation on those frames, open each one individually.",
+            )
+            if not frame_ids:
+                return
+
         _existing_frames = [
             fid for fid in frame_ids
             if (annotations_dir_cap and os.path.exists(os.path.join(annotations_dir_cap, f"{fid}.json")))
