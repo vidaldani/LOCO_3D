@@ -2018,8 +2018,12 @@ class LabelEditorWindow(QMainWindow):
             try:
                 with open(info_path) as _f:
                     _info = json.load(_f)
-                self._dataset_axes = (_info.get("info", {}).get("bbox_3d_axes")
-                                      or _info.get("axes"))
+                self._dataset_axes = (
+                    _info.get("annotation_format", {}).get("bbox_3d_axes")
+                    or _info.get("sensor", {}).get("axes")
+                    or _info.get("info", {}).get("bbox_3d_axes")
+                    or _info.get("axes")
+                )
             except Exception:
                 pass
 
