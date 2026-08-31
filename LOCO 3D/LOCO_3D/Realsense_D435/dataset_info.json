@@ -11,6 +11,8 @@
   "sensor": {
     "name": "Intel RealSense D435",
     "calibration_file": "calib/d435_intrinsics.json",
+    "image_size_px": [1920, 1080],
+    "depth_size_px": [1280, 720],
     "depth_unit": "mm",
     "depth_format": "uint16_npy",
     "axes": {
