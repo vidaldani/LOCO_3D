@@ -10,6 +10,7 @@
   },
   "sensor": {
     "name": "Microsoft Kinect V2",
+    "calibration_file": "calib/kinect_v2_intrinsics.json",
     "image_size_px": [1920, 1080],
     "depth_size_px": [512, 424],
     "depth_unit": "mm",
