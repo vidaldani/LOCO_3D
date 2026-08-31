@@ -1,24 +1,46 @@
 {
   "info": {
-    "description": "Logistics Dataset",
+    "name": "LOCO 3D — Logistics Objects with 3D Annotations (RealSense D435)",
+    "description": "3D bounding box annotations of logistics objects (pallets, small load carriers, stillages, forklifts, pallet trucks) captured with an Intel RealSense D435 in real warehouse environments.",
     "version": "1.0",
     "year": 2026,
-    "sensor": "RealSense D435",
+    "license": "Contact maintainer for usage terms"
+  },
+  "project": {
+    "maintainer": "Daniel Vidal",
+    "email": "daniel.vidal@tum.de",
+    "institution": "Technical University of Munich (TUM)",
+    "repository": "https://github.com/vidaldani/LOCO_3D"
+  },
+  "annotators": [
+    {
+      "username": "dan.vidal",
+      "name": "Daniel Vidal",
+      "email": "daniel.vidal@tum.de",
+      "role": "admin"
+    }
+  ],
+  "sensor": {
+    "name": "Intel RealSense D435",
     "calibration_file": "calib/d435_intrinsics.json",
+    "depth_unit": "mm",
+    "depth_format": "uint16_npy",
+    "axes": {
+      "x": "right",
+      "y": "down",
+      "z": "forward"
+    }
+  },
+  "annotation_format": {
     "bbox_2d_format": "xywh_pixels",
     "segmentation_format": "polygon_pixels",
     "bbox_3d_units": "meters",
     "bbox_3d_frame": "camera",
-    "bbox_3d_axes": {
-      "x": "right",
-      "y": "down",
-      "z": "forward"
-    },
     "bbox_3d_center": "geometric_center",
     "bbox_3d_rotation": {
-      "yaw": "radians_around_y_axis",
-      "rx":  "degrees_around_x_axis",
-      "rz":  "degrees_around_z_axis"
+      "yaw": "degrees_around_y_axis",
+      "rx": "degrees_around_x_axis",
+      "rz": "degrees_around_z_axis"
     }
   }
 }
