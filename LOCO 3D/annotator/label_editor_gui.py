@@ -2358,6 +2358,7 @@ class LabelEditorWindow(QMainWindow):
             visible = [
                 f for f in self._all_frame_files
                 if self._frame_meta(os.path.splitext(f)[0]).get("manually_modified")
+                and not self._frame_meta(os.path.splitext(f)[0]).get("verified_by")
             ]
         elif mode == "Flagged frames":
             visible = [
