@@ -43,7 +43,7 @@ _CLASS_DIMS: dict[str, tuple[float, float, float]] = {
 # H may be a float (upper cap, measured value kept when shorter)
 # or a (H_min, H_max) tuple (measured height clamped to the range).
 _CLASS_DIMS_RANGE: dict[str, tuple] = {
-    "small_load_carrier": ((0.400, 0.600), (0.300, 0.400), (0.001, 10.0)),
+    "small_load_carrier": ((0.400, 0.600), (0.300, 0.400), (0.147, 0.280)),
     "pallet_truck":       ((1.375, 2.200), (0.550, 1.000), (1.000, 1.200)),
 }
 

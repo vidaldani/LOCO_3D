@@ -110,7 +110,7 @@ def _class_dims_for(cls_name: str):
 
 # Classes whose size is not fixed but bounded — ((L_min,L_max),(W_min,W_max), H)
 _DIMS_RANGE: dict[str, tuple] = {
-    "small_load_carrier": ((0.400, 0.600), (0.300, 0.400), (0.001, 10.0)),
+    "small_load_carrier": ((0.400, 0.600), (0.300, 0.400), (0.147, 0.280)),
 }
 
 def _class_dims_range_for(cls_name: str):
