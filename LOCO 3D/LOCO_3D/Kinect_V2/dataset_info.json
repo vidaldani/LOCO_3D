@@ -8,13 +8,6 @@
     "email": "daniel.vidal@tum.de",
     "institution": "Technical University of Munich (TUM)"
   },
-  "annotators": [
-    {
-      "name": "Daniel Vidal",
-      "email": "daniel.vidal@tum.de",
-      "role": "admin"
-    }
-  ],
   "sensor": {
     "name": "Microsoft Kinect V2",
     "image_size_px": [1920, 1080],

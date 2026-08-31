@@ -8,13 +8,6 @@
     "email": "daniel.vidal@tum.de",
     "institution": "Technical University of Munich (TUM)"
   },
-  "annotators": [
-    {
-      "name": "Daniel Vidal",
-      "email": "daniel.vidal@tum.de",
-      "role": "admin"
-    }
-  ],
   "sensor": {
     "name": "Intel RealSense D435",
     "calibration_file": "calib/d435_intrinsics.json",
