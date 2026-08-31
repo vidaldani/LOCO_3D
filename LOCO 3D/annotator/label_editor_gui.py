@@ -1779,7 +1779,7 @@ class LabelEditorWindow(QMainWindow):
 
         bottom_btn_row = QHBoxLayout()
         self._verify_btn = QPushButton("✓ Verify frame")
-        self._verify_btn.setToolTip("Mark selected frame as verified (admin only)")
+        self._verify_btn.setToolTip("Mark checked frames as verified (admin only); falls back to current frame if none checked)")
         self._verify_btn.setEnabled(False)
         self._verify_btn.clicked.connect(self._on_verify_frame)
         bottom_btn_row.addWidget(self._verify_btn)
@@ -3447,10 +3447,7 @@ class LabelEditorWindow(QMainWindow):
             self._on_save()
 
     def _on_verify_frame(self):
-        """Admin-only: mark the current frame as verified after re-authenticating."""
-        if self.current_frame_id is None:
-            QMessageBox.information(self, "No frame", "Load a frame first.")
-            return
+        """Admin-only: mark checked frames (or current frame) as verified."""
         if not self._current_user or self._current_user.get("role") != "admin":
             QMessageBox.warning(self, "Admin only", "Only admins can verify annotations.")
             return
@@ -3458,7 +3455,15 @@ class LabelEditorWindow(QMainWindow):
             QMessageBox.warning(self, "No project", "No annotation directory found.")
             return
 
-        # Re-authenticate the current admin user
+        # Collect target frames — checked frames first, fall back to current frame
+        frame_ids = self.get_checked_frame_ids()
+        if not frame_ids:
+            if self.current_frame_id is None:
+                QMessageBox.information(self, "No frame", "Load a frame first.")
+                return
+            frame_ids = [self.current_frame_id]
+
+        # Re-authenticate once for the whole batch
         from PyQt5.QtWidgets import QInputDialog, QLineEdit
         pw, ok = QInputDialog.getText(self, "Verify — confirm password",
                                       "Enter your password to confirm verification:",
@@ -3475,24 +3480,30 @@ class LabelEditorWindow(QMainWindow):
             QMessageBox.warning(self, "Wrong password", "Incorrect password.")
             return
 
-        # Already verified?
-        meta = self._frame_meta(self.current_frame_id)
-        if meta.get("verified_by"):
+        # Warn once if any frames are already verified
+        already = [fid for fid in frame_ids if self._frame_meta(fid).get("verified_by")]
+        if already:
+            _n = len(already)
             reply = QMessageBox.question(
                 self, "Already verified",
-                f"This frame was already verified by '{meta['verified_by']}'.\n"
-                "Re-verify (overwrite)?",
+                f"{_n} frame{'s' if _n > 1 else ''} {'are' if _n > 1 else 'is'} already verified.\n"
+                "Re-verify (overwrite) those frames?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
             if reply != QMessageBox.Yes:
+                frame_ids = [fid for fid in frame_ids if fid not in already]
+            if not frame_ids:
                 return
 
         updates = {
             "verified_by": self._current_user["username"],
             "verified_at": datetime.datetime.now().isoformat(timespec="seconds"),
         }
-        self._update_frame_meta(self.current_frame_id, updates)
-        self._update_status(f"Frame {self.current_frame_id} marked as verified.")
+        for fid in frame_ids:
+            self._update_frame_meta(fid, updates)
+
+        n = len(frame_ids)
+        self._update_status(f"{n} frame{'s' if n > 1 else ''} marked as verified.")
         if self._filter_combo.currentIndex() != 0:
             self._apply_file_filter()
 
