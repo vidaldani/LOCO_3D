@@ -4461,19 +4461,48 @@ class LabelEditorWindow(QMainWindow):
                     frame_objs: list = []
                     frame_obj_masks: list = []
 
+                    # For the validated frame in single-object mode, identify the
+                    # validated detection by bbox overlap so the stored yaw matches
+                    # what the user saw in step 4.  Index-based matching is fragile
+                    # (confidence filtering can shift indices), so use IoU instead.
+                    _validated_bbox = None
+                    if (frame_idx == validated_idx_cap
+                            and not dlg._multi_mode
+                            and dlg.result is not None):
+                        _vb = dlg.result.get("bbox_2d")
+                        if _vb and len(_vb) == 4:
+                            _validated_bbox = [int(v) for v in _vb]
+
                     for det_idx, (box, det_mask, cls_name) in enumerate(
                             zip(frame_det.xyxy, masks, cls_names)):
                         worker.object_progress.emit(det_idx, len(frame_det))
                         cls_name = _canonical_class_name(cls_name)
-                        # For the validated detection in single-object mode, use the
-                        # dialog's pre-computed result so the stored yaw matches step 4.
-                        if (frame_idx == validated_idx_cap
-                                and not dlg._multi_mode
-                                and det_idx == dlg._selected_idx
-                                and dlg.result is not None):
+
+                        # Check whether this detection is the validated one.
+                        _use_validated = False
+                        if _validated_bbox is not None:
+                            bx1, by1, bx2, by2 = box.astype(int)
+                            vx1, vy1, vx2, vy2 = _validated_bbox
+                            ix1 = max(bx1, vx1); iy1 = max(by1, vy1)
+                            ix2 = min(bx2, vx2); iy2 = min(by2, vy2)
+                            if ix2 > ix1 and iy2 > iy1:
+                                inter = (ix2 - ix1) * (iy2 - iy1)
+                                area_b = max((bx2 - bx1) * (by2 - by1), 1)
+                                if inter / area_b > 0.5:
+                                    _use_validated = True
+
+                        if _use_validated:
                             obj = dict(dlg.result)
-                            x1v, y1v, x2v, y2v = box.astype(int)
-                            obj["bbox_2d"] = [int(x1v), int(y1v), int(x2v), int(y2v)]
+                            obj["rotations"] = dict(obj["rotations"])
+                            bx1, by1, bx2, by2 = box.astype(int)
+                            obj["bbox_2d"] = [int(bx1), int(by1), int(bx2), int(by2)]
+                            # Dialog result has raw yaw (no z_backward); apply it now.
+                            if z_backward:
+                                cen = dict(obj.get("centroid", {}))
+                                cen["y"] = -cen.get("y", 0.0)
+                                cen["z"] = -cen.get("z", 0.0)
+                                obj["centroid"] = cen
+                                obj["rotations"]["y"] = -obj["rotations"]["y"]
                         else:
                             obj = _process_detection(
                                 box, det_mask, dep_f, rgb_f.shape[:2], fx_f, fy_f, cx_f, cy_f, cls_name)
