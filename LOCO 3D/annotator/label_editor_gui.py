@@ -4289,6 +4289,9 @@ class LabelEditorWindow(QMainWindow):
             return
 
         validated_idx = dlg.validated_frame_idx
+        # Capture the validated frame's FID *before* frame_ids is filtered below.
+        # Index-based comparison breaks when manually-annotated frames are removed.
+        validated_fid = frame_ids[validated_idx] if validated_idx < len(frame_ids) else None
         detections    = dlg._detections
 
         hdf_params     = dlg._hdf_params
@@ -4356,10 +4359,11 @@ class LabelEditorWindow(QMainWindow):
             return [None] * len(frame_detections)
 
         # ── batch worker runs all frame processing in a background thread ────
-        save_fn           = self._save_auto_result_to_file
-        current_fid_cap   = self.current_frame_id
-        validated_idx_cap = validated_idx
-        load_frame_cap    = _load_frame
+        save_fn            = self._save_auto_result_to_file
+        current_fid_cap    = self.current_frame_id
+        validated_fid_cap  = validated_fid      # FID-based; survives frame_ids filtering
+        _frame_orig_idx    = {fp[0]: i for i, fp in enumerate(frame_paths)}
+        load_frame_cap     = _load_frame
         coco_db_cap       = self._coco_db  # None if old format
         annotations_dir_cap = self._annotations_dir
         blur_faces_cap    = dlg.blur_faces
@@ -4432,18 +4436,21 @@ class LabelEditorWindow(QMainWindow):
                 if worker._cancel:
                     break
                 worker.frame_started.emit(frame_idx, fid)
+                # Look up the ORIGINAL position of this fid in frame_paths so
+                # _load_frame uses the correct path even after frame_ids was filtered.
+                _orig_idx = _frame_orig_idx.get(fid, frame_idx)
                 try:
-                    if frame_idx == validated_idx_cap:
+                    if fid == validated_fid_cap:
                         # Re-use the image and detections from the validation step
-                        rgb_f, dep_f, fx_f, fy_f, cx_f, cy_f = load_frame_cap(frame_idx)
+                        rgb_f, dep_f, fx_f, fy_f, cx_f, cy_f = load_frame_cap(_orig_idx)
                         frame_det = detections
                     else:
-                        rgb_f, dep_f, fx_f, fy_f, cx_f, cy_f = load_frame_cap(frame_idx)
+                        rgb_f, dep_f, fx_f, fy_f, cx_f, cy_f = load_frame_cap(_orig_idx)
                         frame_det = dlg.run_on_image(rgb_f)
 
                     # Blur faces in this frame's RGB before continuing
                     if blur_faces_cap:
-                        rgb_path_f = frame_paths[frame_idx][1]  # (fid, rgb, depth, params)
+                        rgb_path_f = frame_paths[_orig_idx][1]  # (fid, rgb, depth, params)
                         if rgb_path_f:
                             img_bgr = cv2.imread(rgb_path_f)
                             if img_bgr is not None:
@@ -4463,10 +4470,10 @@ class LabelEditorWindow(QMainWindow):
 
                     # For the validated frame in single-object mode, identify the
                     # validated detection by bbox overlap so the stored yaw matches
-                    # what the user saw in step 4.  Index-based matching is fragile
-                    # (confidence filtering can shift indices), so use IoU instead.
+                    # what the user saw in step 4.  Match by FID (survives frame_ids
+                    # filtering) and bbox IoU (survives confidence-filter index shifts).
                     _validated_bbox = None
-                    if (frame_idx == validated_idx_cap
+                    if (fid == validated_fid_cap
                             and not dlg._multi_mode
                             and dlg.result is not None):
                         _vb = dlg.result.get("bbox_2d")
