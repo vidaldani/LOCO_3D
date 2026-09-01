@@ -3076,6 +3076,7 @@ class LabelEditorWindow(QMainWindow):
             dep_masked,
             resolution=hdf_params["resolution"],
             max_height_percent=hdf_params["max_height_percent"],
+            ignore_background=hdf_params.get("ignore_background", False),
         )
         mask_crop = (filtered > 0).astype(np.uint8)
         try:
@@ -4326,6 +4327,7 @@ class LabelEditorWindow(QMainWindow):
                 dep_masked,
                 resolution=hdf_params["resolution"],
                 max_height_percent=hdf_params["max_height_percent"],
+                ignore_background=hdf_params.get("ignore_background", False),
             )
             mask_crop = (filtered > 0).astype(np.uint8)
             try:
@@ -4463,8 +4465,18 @@ class LabelEditorWindow(QMainWindow):
                             zip(frame_det.xyxy, masks, cls_names)):
                         worker.object_progress.emit(det_idx, len(frame_det))
                         cls_name = _canonical_class_name(cls_name)
-                        obj = _process_detection(
-                            box, det_mask, dep_f, rgb_f.shape[:2], fx_f, fy_f, cx_f, cy_f, cls_name)
+                        # For the validated detection in single-object mode, use the
+                        # dialog's pre-computed result so the stored yaw matches step 4.
+                        if (frame_idx == validated_idx_cap
+                                and not dlg._multi_mode
+                                and det_idx == dlg._selected_idx
+                                and dlg.result is not None):
+                            obj = dict(dlg.result)
+                            x1v, y1v, x2v, y2v = box.astype(int)
+                            obj["bbox_2d"] = [int(x1v), int(y1v), int(x2v), int(y2v)]
+                        else:
+                            obj = _process_detection(
+                                box, det_mask, dep_f, rgb_f.shape[:2], fx_f, fy_f, cx_f, cy_f, cls_name)
                         if obj is not None:
                             frame_objs.append(obj)
                             frame_obj_masks.append(det_mask)
