@@ -181,7 +181,8 @@ def estimate_yaw_and_aligned_bbox_from_top4_front_hull_segments(
 # ---------------------------------------------------------------------------
 
 def estimate_3d_pose(depth_crop, mask_crop, x1, y1, fx, fy, cx, cy,
-                     class_dims=None, class_dims_range=None):
+                     class_dims=None, class_dims_range=None,
+                     flip_long_short: bool = False):
     """
     3D pose estimation using aligned X-Z bounding box + axis-aligned Y extent.
 
@@ -301,12 +302,17 @@ def estimate_3d_pose(depth_crop, mask_crop, x1, y1, fx, fy, cx, cy,
         # reflects the complete observed width along the reference direction.
         face_extent = float(np.linalg.norm(bbox_xz[1] - bbox_xz[0]))  # full u-extent
         # For range-based dims: face_extent > W_max means it cannot be the short face.
-        # For fixed dims: use 110 % of the nominal short class dimension.
+        # For fixed dims: use the midpoint between long and short class dims.
+        # Using 110 % of short_class was too close to the short side, causing
+        # misclassification when depth noise inflated the measured short face.
         if _range_sides is not None:
             threshold_short = _range_sides[5]   # W_max
         else:
-            threshold_short = 1.10 * short_class
-        edge_is_long_face = face_extent > threshold_short
+            threshold_short = (long_class + short_class) / 2.0
+        if flip_long_short:
+            edge_is_long_face = face_extent <= threshold_short
+        else:
+            edge_is_long_face = face_extent > threshold_short
 
         # Near corner = corner of the oriented footprint closest to sensor (origin)
         dists    = np.linalg.norm(bbox_xz, axis=1)

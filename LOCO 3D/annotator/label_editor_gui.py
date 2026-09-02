@@ -353,7 +353,7 @@ def _rotation_matrix(rx_deg: float, ry_deg: float, rz_deg: float) -> np.ndarray:
     cy, sy = np.cos(ry), np.sin(ry)
     cz, sz = np.cos(rz), np.sin(rz)
     Rx = np.array([[1,  0,   0 ], [0,  cx, -sx], [0,  sx,  cx]])
-    Ry = np.array([[cy, 0,  sy ], [0,  1,   0 ], [-sy, 0,  cy]])
+    Ry = np.array([[cy, 0, -sy ], [0,  1,   0 ], [ sy, 0,  cy]])
     Rz = np.array([[cz, -sz, 0 ], [sz, cz,  0 ], [0,   0,   1]])
     return Rx @ Ry @ Rz
 
@@ -4510,9 +4510,12 @@ class LabelEditorWindow(QMainWindow):
                                 cen["z"] = -cen.get("z", 0.0)
                                 obj["centroid"] = cen
                                 obj["rotations"]["y"] = -obj["rotations"]["y"]
+                            print(f"[YAW-FIX] Using dlg.result for fid={fid} det={det_idx}: yaw={obj['rotations']['y']:.1f}°")
                         else:
                             obj = _process_detection(
                                 box, det_mask, dep_f, rgb_f.shape[:2], fx_f, fy_f, cx_f, cy_f, cls_name)
+                            if obj is not None:
+                                print(f"[YAW-FIX] Using _process_detection for fid={fid} det={det_idx}: yaw={obj['rotations']['y']:.1f}°")
                         if obj is not None:
                             frame_objs.append(obj)
                             frame_obj_masks.append(det_mask)

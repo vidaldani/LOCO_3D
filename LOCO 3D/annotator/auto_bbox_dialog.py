@@ -1028,6 +1028,18 @@ class AutoBBoxValidationDialog(QDialog):
         self._pose_label.setStyleSheet("color: #9cdcfe; font-size: 11px;")
         layout.addWidget(self._pose_label)
 
+        self._flip_btn = QPushButton("Flip long/short axis (90°)")
+        self._flip_btn.setToolTip(
+            "If the orientation is 90° wrong, click to swap the long/short face classification."
+        )
+        self._flip_btn.setEnabled(False)
+        self._flip_btn.clicked.connect(self._on_flip_yaw)
+        layout.addWidget(self._flip_btn)
+
+    def _on_flip_yaw(self):
+        self._yaw_flipped = not getattr(self, "_yaw_flipped", False)
+        self._run_pose_and_show()
+
     def _run_pose_and_show(self):
         try:
             _, center, dimensions, yaw_deg, bbox_result = estimate_3d_pose(
@@ -1036,6 +1048,7 @@ class AutoBBoxValidationDialog(QDialog):
                 self._fx, self._fy, self._cx, self._cy,
                 class_dims=_CLASS_DIMS.get(self._class_name),
                 class_dims_range=_CLASS_DIMS_RANGE.get(self._class_name),
+                flip_long_short=getattr(self, "_yaw_flipped", False),
             )
         except Exception as e:
             # Try to get a rough centroid from whatever sparse depth pixels exist
@@ -1072,6 +1085,7 @@ class AutoBBoxValidationDialog(QDialog):
             ax.set_xticks([])
             ax.set_yticks([])
             self._topdown_canvas.draw()
+            self._flip_btn.setEnabled(False)
             self._accept_btn.setEnabled(True)
             return
 
@@ -1083,6 +1097,12 @@ class AutoBBoxValidationDialog(QDialog):
             f"Center: ({center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f}) m   "
             f"Dims (L×W×H): {dimensions[0]:.3f}×{dimensions[2]:.3f}×{dimensions[1]:.3f} m   "
             f"Yaw: {yaw_deg:.1f}°"
+        )
+        self._flip_btn.setEnabled(True)
+        flipped = getattr(self, "_yaw_flipped", False)
+        self._flip_btn.setText(
+            "Flip long/short axis (90°)  ✓ FLIPPED" if flipped
+            else "Flip long/short axis (90°)"
         )
 
         ax = (self._topdown_fig.clf(), self._topdown_fig.add_subplot(1, 1, 1))[1]
@@ -1150,6 +1170,7 @@ class AutoBBoxValidationDialog(QDialog):
             QTimer.singleShot(0, self._refresh_overlay_pixmap)
         elif page == 2:
             # HDF → pose
+            self._yaw_flipped = False
             self._run_pose_and_show()
             self._stack.setCurrentIndex(3)
             self._next_btn.setVisible(False)
