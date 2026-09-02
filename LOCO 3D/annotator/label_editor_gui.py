@@ -2628,6 +2628,7 @@ class LabelEditorWindow(QMainWindow):
         if self._active_widget:
             self._active_widget.clear_highlights()
         self._render_scene()
+        self._refresh_image_pixmap()
 
     def _render_scene(self, reset_camera: bool = False):
         do_reset = reset_camera or self._camera_needs_reset
@@ -2685,6 +2686,7 @@ class LabelEditorWindow(QMainWindow):
             self._camera_needs_reset = False
         else:
             self.plotter.camera_position = cam_pos
+        self.plotter.render()
 
     def _set_initial_camera(self):
         """Orient the camera according to the dataset's coordinate axes (from dataset_info.json).
@@ -3770,7 +3772,7 @@ class LabelEditorWindow(QMainWindow):
                 [ L/2,  H/2,  W/2], [-L/2,  H/2,  W/2],
             ])
             c, s = np.cos(yaw), np.sin(yaw)
-            R = np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]])
+            R = np.array([[c, 0, -s], [0, 1, 0], [s, 0, c]])
             pts = (R @ corners.T).T + np.array([cX, cY, cZ])
             in_front = pts[:, 2] > 0
             if not in_front.any():
