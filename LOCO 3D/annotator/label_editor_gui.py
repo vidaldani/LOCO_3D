@@ -2686,7 +2686,6 @@ class LabelEditorWindow(QMainWindow):
             self._camera_needs_reset = False
         else:
             self.plotter.camera_position = cam_pos
-        self.plotter.render()
 
     def _set_initial_camera(self):
         """Orient the camera according to the dataset's coordinate axes (from dataset_info.json).
@@ -4512,12 +4511,9 @@ class LabelEditorWindow(QMainWindow):
                                 cen["z"] = -cen.get("z", 0.0)
                                 obj["centroid"] = cen
                                 obj["rotations"]["y"] = -obj["rotations"]["y"]
-                            print(f"[YAW-FIX] Using dlg.result for fid={fid} det={det_idx}: yaw={obj['rotations']['y']:.1f}°")
                         else:
                             obj = _process_detection(
                                 box, det_mask, dep_f, rgb_f.shape[:2], fx_f, fy_f, cx_f, cy_f, cls_name)
-                            if obj is not None:
-                                print(f"[YAW-FIX] Using _process_detection for fid={fid} det={det_idx}: yaw={obj['rotations']['y']:.1f}°")
                         if obj is not None:
                             frame_objs.append(obj)
                             frame_obj_masks.append(det_mask)
