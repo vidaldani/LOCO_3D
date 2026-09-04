@@ -4603,13 +4603,16 @@ class LabelEditorWindow(QMainWindow):
             self._batch_coco_accumulated = {}
 
         # Replace mode: clear existing objects for the current frame before adding new results
-        if getattr(self, '_batch_replace_mode', False) and \
-                self.current_frame_id in getattr(self, '_batch_frame_ids', []):
+        _replace_mode_active = (
+            getattr(self, '_batch_replace_mode', False) and
+            self.current_frame_id in getattr(self, '_batch_frame_ids', [])
+        )
+        if _replace_mode_active:
             self.current_objects.clear()
             self.object_list.blockSignals(True)
             self.object_list.clear()
             self.object_list.blockSignals(False)
-            self._active_widget = None
+            self._clear_active_widget()   # properly hide and remove old widget from layout
             self._selected_obj_idx = -1
 
         self.object_list.blockSignals(True)
@@ -4622,6 +4625,9 @@ class LabelEditorWindow(QMainWindow):
         self.object_list.blockSignals(False)
         if current_frame_objs:
             self._dirty = True
+            if _replace_mode_active and self.object_list.count() > 0:
+                # Auto-select first new object so the user can edit it immediately
+                self.object_list.setCurrentRow(0)
         self._render_scene()
         if self.current_frame_id:
             self._load_rgb_image(self.current_frame_id)  # pick up freshly saved seg mask
