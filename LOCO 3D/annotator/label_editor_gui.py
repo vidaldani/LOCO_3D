@@ -3183,6 +3183,7 @@ class LabelEditorWindow(QMainWindow):
             self._3d_bb_manually_touched = False
             self._dirty = False
             self._update_status(f"Saved {self.current_frame_id}.json")
+            self._refresh_file_list_item(self.current_frame_id)
             if self._filter_combo.currentIndex() != 0:
                 self._apply_file_filter()
             return
@@ -3211,6 +3212,7 @@ class LabelEditorWindow(QMainWindow):
             self._update_status(f"New label file created: {self.current_frame_id}.json")
         else:
             self._update_status(f"Saved {self.current_frame_id}.json successfully")
+        self._refresh_file_list_item(self.current_frame_id)
         if self._filter_combo.currentIndex() != 0:
             self._apply_file_filter()
 
@@ -4205,6 +4207,50 @@ class LabelEditorWindow(QMainWindow):
                     self.file_list.blockSignals(False)
                     return
 
+    def _refresh_file_list_item(self, frame_id: str):
+        """Update color and annotator text for a single file-list row in-place."""
+        for i in range(self.file_list.topLevelItemCount()):
+            item = self.file_list.topLevelItem(i)
+            if item and os.path.splitext(self._item_fname(item))[0] == frame_id:
+                meta              = self._frame_meta(frame_id)
+                flagged           = meta.get("flagged", False)
+                verified_by       = meta.get("verified_by", "")
+                manually_modified = meta.get("manually_modified", False)
+                annotated_by      = meta.get("annotated_by", "") if manually_modified else ""
+                has_ann           = self._frame_has_annotations(frame_id)
+
+                if not has_ann:
+                    annotator_col = "no annotation"
+                elif manually_modified and annotated_by:
+                    annotator_col = annotated_by
+                else:
+                    annotator_col = "auto"
+
+                icon_col = ""
+                if verified_by:
+                    icon_col += "✓"
+                if flagged:
+                    icon_col += "🚩"
+
+                if flagged:
+                    color = QColor("#e05252")
+                elif verified_by:
+                    color = QColor("#4ec94e")
+                elif manually_modified:
+                    color = QColor("#d4d4d4")
+                elif has_ann:
+                    color = QColor("#9cdcfe")
+                else:
+                    color = QColor("#666666")
+
+                self.file_list.blockSignals(True)
+                item.setText(1, annotator_col)
+                item.setText(2, icon_col)
+                for col in range(3):
+                    item.setForeground(col, color)
+                self.file_list.blockSignals(False)
+                return
+
     # ------------------------------------------------------------------
     # Autonomous 3D BB generation
     # ------------------------------------------------------------------
@@ -4685,6 +4731,9 @@ class LabelEditorWindow(QMainWindow):
         self.statusBar().showMessage(msg)
 
     def keyPressEvent(self, event):
+        if event.key() == Qt.Key_S and (event.modifiers() & Qt.ControlModifier):
+            self._on_save()
+            return
         if event.key() == Qt.Key_Delete:
             focused = QApplication.focusWidget()
             # Only fire if focus is not inside a text/spin input
