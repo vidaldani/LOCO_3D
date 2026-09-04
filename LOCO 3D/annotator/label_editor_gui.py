@@ -3486,6 +3486,7 @@ class LabelEditorWindow(QMainWindow):
         }
         for fid in frame_ids:
             self._update_frame_meta(fid, updates)
+            self._refresh_file_list_item(fid)
 
         n = len(frame_ids)
         self._update_status(f"{n} frame{'s' if n > 1 else ''} marked as verified.")
