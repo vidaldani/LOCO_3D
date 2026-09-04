@@ -4394,23 +4394,37 @@ class LabelEditorWindow(QMainWindow):
 
         labels_dir_cap = self.labels_dir
 
-        # Check whether any target frames already have annotations.
-        # Frames marked manually_modified are ALWAYS skipped — never overwrite human work.
+        # Frames marked manually_modified are protected from accidental batch overwrites.
+        # Single-frame case: ask the user explicitly. Batch case: skip and inform.
         _manually_annotated = [
             fid for fid in frame_ids
             if self._frame_meta(fid).get("manually_modified")
         ]
         if _manually_annotated:
-            frame_ids = [fid for fid in frame_ids if fid not in _manually_annotated]
-            _nm = len(_manually_annotated)
-            QMessageBox.information(
-                self, "Skipping manually annotated frames",
-                f"{_nm} frame{'s' if _nm > 1 else ''} {'have' if _nm > 1 else 'has'} "
-                "manual annotations and will be skipped.\n\n"
-                "To re-run auto-annotation on those frames, open each one individually.",
-            )
-            if not frame_ids:
-                return
+            if len(frame_ids) == 1:
+                # Single frame targeted — ask the user whether to overwrite.
+                _reply = QMessageBox.question(
+                    self, "Frame has manual annotations",
+                    "This frame was manually annotated.\n\n"
+                    "Do you want to overwrite it with auto-annotation?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No,
+                )
+                if _reply != QMessageBox.Yes:
+                    return
+                # User confirmed — proceed without skipping.
+            else:
+                frame_ids = [fid for fid in frame_ids if fid not in _manually_annotated]
+                _nm = len(_manually_annotated)
+                QMessageBox.information(
+                    self, "Skipping manually annotated frames",
+                    f"{_nm} frame{'s' if _nm > 1 else ''} {'have' if _nm > 1 else 'has'} "
+                    "manual annotations and will be skipped.\n\n"
+                    "To re-run auto-annotation on one of those frames, "
+                    "load it and click Generate 3D BB with only that frame active.",
+                )
+                if not frame_ids:
+                    return
 
         _existing_frames = [
             fid for fid in frame_ids
