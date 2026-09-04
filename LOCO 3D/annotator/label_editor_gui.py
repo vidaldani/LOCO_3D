@@ -2731,34 +2731,7 @@ class LabelEditorWindow(QMainWindow):
         ]
 
     def _on_add_object(self):
-        if not self.current_frame_id:
-            QMessageBox.warning(self, "No frame loaded",
-                                "Please load a point cloud before adding objects.")
-            return
-        if not self.labels_dir:
-            QMessageBox.warning(self, "No labels folder",
-                                "Please load a project with a labels folder first.")
-            return
-
-        dlg = AddObjectDialog(parent=self)
-        dlg.setStyleSheet(self.styleSheet())
-        if dlg.exec_() != QDialog.Accepted:
-            return
-
-        new_obj = dlg.get_object()
-        self._sync_active()
-        self.current_objects.append(new_obj)
-
-        new_idx = len(self.current_objects) - 1
-        new_item = QListWidgetItem(f"[{new_idx}]  {new_obj['name']}")
-        new_item.setFlags(new_item.flags() | Qt.ItemIsUserCheckable)
-        new_item.setCheckState(Qt.Unchecked)
-        self.object_list.blockSignals(True)
-        self.object_list.addItem(new_item)
-        self.object_list.blockSignals(False)
-        self._dirty = True
-        self.object_list.setCurrentRow(new_idx)
-        self._update_status(f"Added '{new_obj['name']}' — {len(self.current_objects)} object(s)")
+        self._on_edit_masks()
 
     def _remove_seg_masks_for_objs(self, objs: list):
         """Remove the TXT polygon line(s) that best match each object's bbox_2d."""
