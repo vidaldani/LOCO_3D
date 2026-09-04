@@ -3381,6 +3381,9 @@ class LabelEditorWindow(QMainWindow):
             with open(label_path, "w") as f:
                 _json.dump(data, f, indent="\t")
 
+        # Data already saved above — clear dirty flag so _load_frame's unsaved-changes
+        # guard doesn't fire and accidentally overwrite the just-written annotations.
+        self._dirty = False
         # Reload frame so UI reflects new objects
         self._load_frame(self.current_frame_id)
 
