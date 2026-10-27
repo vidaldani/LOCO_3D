@@ -42,7 +42,7 @@ LOCO_3D/                        ← clone root
 
 The binary sensor data (~10 GB) is not stored in this git repository. Download it from LRZ Sync+Share and place it inside `LOCO_3D/`:
 
-**[⬇ Download LOCO\_3D binary dataset — LRZ Sync+Share](https://syncandshare.lrz.de/getlink/fi2tNbReQbewJsQt7TVNke/LOCO_3D)**
+**[⬇ Download LOCO\_3D binary dataset — LRZ Sync+Share](https://syncandshare.lrz.de/getlink/fiPaK475MZpnK9KfcNfKZW/)**
 
 After downloading, extract the contents so the binary folders sit inside `LOCO 3D/LOCO_3D/`:
 
@@ -282,6 +282,19 @@ z → forward (into the scene)
 ```
 
 See each sensor's `dataset_info.json` for depth units and image resolution.
+
+---
+
+## License
+
+This dataset and annotation tool are released under the **Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)** license.
+
+- **Free for academic and research use** — with attribution.
+- **Commercial use is not permitted** without prior written agreement.
+
+For commercial licensing enquiries, contact [daniel.vidal@tum.de](mailto:daniel.vidal@tum.de).
+
+Full license: [creativecommons.org/licenses/by-nc/4.0](https://creativecommons.org/licenses/by-nc/4.0/)
 
 ---
 
