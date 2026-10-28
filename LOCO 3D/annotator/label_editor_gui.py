@@ -543,11 +543,38 @@ def _migrate_users_format(stored: dict) -> list:
     return users_list
 
 
+_USERS_FILENAME = "users.json"
+
+
+def _users_path(root: str) -> str:
+    return os.path.join(root, _USERS_FILENAME)
+
+
 def _load_project_users(root: str) -> list | None:
-    """Return list of user dicts for this project, or None if none configured."""
-    data = _load_project_file(root)
-    if data is not None and "users" in data:
-        return _migrate_users_format(data["users"])
+    """Return list of user dicts for this project, or None if none configured.
+
+    User list (username + role) is stored in <dataset_root>/users.json so it
+    travels with the git repo and is shared across all annotators.
+    Password hashes are kept in the local project file only (private per machine)
+    and merged in at load time.
+    """
+    # Load shared user list from dataset folder (git-tracked)
+    users_file = _users_path(root)
+    if os.path.isfile(users_file):
+        try:
+            with open(users_file) as f:
+                shared = json.load(f)
+            users = _migrate_users_format(shared)
+            # Merge in local password hashes
+            local_data = _load_project_file(root)
+            local_pw = {}
+            if local_data and "password_hashes" in local_data:
+                local_pw = local_data["password_hashes"]
+            for u in users:
+                u["password_hash"] = local_pw.get(u["username"], "")
+            return users
+        except Exception:
+            pass
 
     # Migration 1: old ~/.3d_label_editor.json project_users key
     try:
@@ -574,14 +601,38 @@ def _load_project_users(root: str) -> list | None:
         except Exception:
             pass
 
+    # Migration 3: local project file (old format before users.json)
+    data = _load_project_file(root)
+    if data is not None and "users" in data:
+        users = _migrate_users_format(data["users"])
+        _save_project_users(root, users)   # migrate to new split format
+        return users
+
     return None
 
 
 def _save_project_users(root: str, users: list | dict):
-    """Persist users for a project into its project file."""
+    """Persist users for a project.
+
+    Roles are written to <dataset_root>/users.json (git-tracked, shared).
+    Password hashes are written to the local project file only (private).
+    """
     if isinstance(users, dict):
         users = _migrate_users_format(users)
-    _save_project_file(root, {"dataset_root": root, "users": users})
+
+    # Write shared file: username + role only, no passwords
+    shared = [{"username": u["username"], "role": u.get("role", "annotator")}
+              for u in users]
+    try:
+        with open(_users_path(root), "w") as f:
+            json.dump(shared, f, indent=2)
+    except Exception:
+        pass
+
+    # Write password hashes to local project file
+    pw_map = {u["username"]: u.get("password_hash", "")
+              for u in users if u.get("password_hash")}
+    _save_project_file(root, {"dataset_root": root, "password_hashes": pw_map})
 
 
 class LoginDialog(QDialog):
