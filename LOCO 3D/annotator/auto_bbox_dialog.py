@@ -19,7 +19,7 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QListWidget,
     QPushButton, QStackedWidget, QWidget, QSizePolicy, QComboBox, QCheckBox,
     QDoubleSpinBox, QRadioButton, QGroupBox, QFileDialog, QMessageBox,
-    QLineEdit, QFrame, QApplication,
+    QLineEdit, QFrame, QApplication, QSlider,
 )
 from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal, QEvent
 from PyQt5.QtGui import QPixmap, QImage
@@ -1028,6 +1028,25 @@ class AutoBBoxValidationDialog(QDialog):
         self._pose_label.setStyleSheet("color: #9cdcfe; font-size: 11px;")
         layout.addWidget(self._pose_label)
 
+        # Column-density filter slider (test feature)
+        col_row = QHBoxLayout()
+        col_row.addWidget(QLabel("Min pts/cell (3 cm grid):"))
+        self._col_density_slider = QSlider(Qt.Horizontal)
+        self._col_density_slider.setMinimum(1)
+        self._col_density_slider.setMaximum(500)
+        self._col_density_slider.setValue(15)
+        self._col_density_slider.setTickPosition(QSlider.TicksBelow)
+        self._col_density_slider.setTickInterval(50)
+        col_row.addWidget(self._col_density_slider, stretch=1)
+        self._col_density_val_label = QLabel("15")
+        self._col_density_val_label.setFixedWidth(90)
+        col_row.addWidget(self._col_density_val_label)
+        layout.addLayout(col_row)
+        self._col_stats_label = QLabel("")
+        self._col_stats_label.setStyleSheet("color: #9cdcfe; font-size: 10px;")
+        layout.addWidget(self._col_stats_label)
+        self._col_density_slider.valueChanged.connect(self._on_col_density_changed)
+
         self._flip_btn = QPushButton("Flip long/short axis (90°)")
         self._flip_btn.setToolTip(
             "If the orientation is 90° wrong, click to swap the long/short face classification."
@@ -1039,6 +1058,171 @@ class AutoBBoxValidationDialog(QDialog):
     def _on_flip_yaw(self):
         self._yaw_flipped = not getattr(self, "_yaw_flipped", False)
         self._run_pose_and_show()
+
+    # ------------------------------------------------------------------
+    # 2-D XZ density filter (test slider on top-down view)
+    # ------------------------------------------------------------------
+    _DENSITY_CELL_M = 0.03   # 3 cm grid cells in metric XZ space
+
+    def _rebuild_col_cache(self):
+        """Precompute XZ points + per-point 2-D cell count. Called once after each pose run."""
+        self._col_cache = None
+        if self._filtered_depth is None or self._mask_crop is None:
+            return
+        ys, xs = np.where(self._mask_crop > 0)
+        if len(xs) == 0:
+            return
+        zs = self._filtered_depth[ys, xs].astype(np.float32) / 1000.0
+        valid = zs > 0
+        xs, zs = xs[valid], zs[valid]
+        if len(xs) == 0:
+            return
+        gxs = xs + self._x1
+        X_all = (gxs - self._cx) * zs / self._fx
+        pts_all = np.stack([X_all, zs], axis=1)
+
+        # 2-D grid cell for each point
+        cs = self._DENSITY_CELL_M
+        cx_idx = np.floor(X_all / cs).astype(np.int32)
+        cz_idx = np.floor(zs    / cs).astype(np.int32)
+        cells  = np.stack([cx_idx, cz_idx], axis=1)
+        _, inv, counts = np.unique(cells, axis=0, return_inverse=True,
+                                   return_counts=True)
+        pts_cell_count = counts[inv]   # count of neighbours in same 2-D cell
+
+        occ = counts                   # distribution of occupied-cell counts
+        p10, p50, p90 = (int(np.percentile(occ, q)) for q in (10, 50, 90))
+        self._col_cache = {
+            "pts_all":        pts_all,
+            "pts_cell_count": pts_cell_count,
+        }
+        self._col_stats_label.setText(
+            f"2D cell counts ({int(cs*100)} cm grid) — "
+            f"min:{occ.min()}  p10:{p10}  median:{p50}  p90:{p90}  max:{occ.max()}  "
+            f"| {len(xs)} pts"
+        )
+
+    def _on_col_density_changed(self, value: int):
+        lbl = f"{value} (off)" if value <= 1 else str(value)
+        self._col_density_val_label.setText(lbl)
+
+        cache = getattr(self, "_col_cache", None)
+        if cache is None:
+            return
+
+        pts_all        = cache["pts_all"]
+        pts_cell_count = cache["pts_cell_count"]
+
+        if value > 1:
+            keep      = pts_cell_count >= value
+            pts_dense = pts_all[keep]
+            n_removed = int((~keep).sum())
+        else:
+            pts_dense = pts_all
+            n_removed = 0
+
+        ax = (self._topdown_fig.clf(), self._topdown_fig.add_subplot(1, 1, 1))[1]
+
+        ax.scatter(pts_all[:, 0], pts_all[:, 1], s=2, alpha=0.12, color="#4fc3f7",
+                   label=f"all ({len(pts_all)})")
+
+        n_dense = len(pts_dense)
+        pct_removed = 100.0 * n_removed / max(len(pts_all), 1)
+        if n_dense >= 50:
+            ax.scatter(pts_dense[:, 0], pts_dense[:, 1], s=3, alpha=0.6,
+                       color="#80ff80",
+                       label=f"kept {n_dense}  (−{n_removed}, {pct_removed:.0f}%)")
+            result = self._hull_and_yaw_from_xz(pts_dense)
+            if result is not None:
+                hull  = result["hull_pts"]
+                p1, p2 = result["edge"]
+                bbox  = result["bbox"]
+                u     = result["direction"]
+                yaw_d = result["yaw_deg"]
+                mean_xz = pts_dense.mean(axis=0)
+                scale = 0.5 * np.linalg.norm(pts_dense.max(0) - pts_dense.min(0))
+                ax.scatter(hull[:, 0], hull[:, 1], c="white", s=8)
+                ax.plot([p1[0], p2[0]], [p1[1], p2[1]], "r", linewidth=3,
+                        label=f"edge yaw {yaw_d:.1f}°")
+                bb = np.vstack([bbox, bbox[0]])
+                ax.plot(bb[:, 0], bb[:, 1], "g--", linewidth=1.5)
+                ax.plot([mean_xz[0] - scale*u[0], mean_xz[0] + scale*u[0]],
+                        [mean_xz[1] - scale*u[1], mean_xz[1] + scale*u[1]],
+                        "r--", linewidth=1)
+                ax.set_title(f"2D density≥{value}  →  yaw={yaw_d:.1f}°  removed {pct_removed:.0f}%",
+                             color="#d4d4d4")
+
+            # Re-run full pose with this density so Accept uses the slider value.
+            density_arg = value if value > 1 else 1
+            try:
+                _, center, dimensions, yaw_deg, _ = estimate_3d_pose(
+                    self._filtered_depth, self._mask_crop,
+                    self._x1, self._y1,
+                    self._fx, self._fy, self._cx, self._cy,
+                    class_dims=_CLASS_DIMS.get(self._class_name),
+                    class_dims_range=_CLASS_DIMS_RANGE.get(self._class_name),
+                    flip_long_short=getattr(self, "_yaw_flipped", False),
+                    density_min_count=density_arg,
+                )
+                self._estimated_center     = center
+                self._estimated_dimensions = dimensions
+                self._estimated_yaw        = yaw_deg
+                self._pose_label.setText(
+                    f"Center: ({center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f}) m   "
+                    f"Dims (L×W×H): {dimensions[0]:.3f}×{dimensions[2]:.3f}×{dimensions[1]:.3f} m   "
+                    f"Yaw: {yaw_deg:.1f}°  [density≥{density_arg}]"
+                )
+            except Exception as exc:
+                self._pose_label.setText(f"Pose failed at density≥{density_arg}: {exc}")
+        else:
+            ax.set_title(
+                f"density≥{value}: only {n_dense} pts left — too few", color="#e05252")
+
+        ax.set_xlabel("X (m)", color="#d4d4d4")
+        ax.set_ylabel("Z (m)", color="#d4d4d4")
+        ax.axis("equal")
+        ax.grid(True, color="#333")
+        ax.legend(fontsize=7)
+        ax.set_facecolor("#1a1a2e")
+        self._topdown_fig.set_facecolor("#1e1e1e")
+        ax.tick_params(colors="#d4d4d4")
+        self._topdown_canvas.draw()
+
+    @staticmethod
+    def _hull_and_yaw_from_xz(pts):
+        """Orientation estimate from pre-projected XZ points (no depth reprojection)."""
+        import math
+        from scipy.spatial import ConvexHull
+        if len(pts) < 30:
+            return None
+        try:
+            hull = ConvexHull(pts, qhull_options='QJ')
+        except Exception:
+            return None
+        hull_pts = pts[hull.vertices]
+        N = len(hull_pts)
+        segs = []
+        for i in range(N):
+            p1 = hull_pts[i]; p2 = hull_pts[(i + 1) % N]
+            d = p2 - p1; L = np.linalg.norm(d)
+            segs.append({"p1": p1, "p2": p2, "length": L,
+                         "mid_z": 0.5 * (p1[1] + p2[1])})
+        top4   = sorted(segs, key=lambda s: s["length"], reverse=True)[:4]
+        front2 = sorted(top4, key=lambda s: s["mid_z"])[:2]
+        best   = max(front2, key=lambda s: s["length"])
+        p1, p2 = best["p1"], best["p2"]
+        ed = p2 - p1; ed /= np.linalg.norm(ed)
+        yaw_d = math.degrees(math.atan2(-ed[1], ed[0]))
+        if yaw_d > 90:  yaw_d -= 180
+        elif yaw_d < -90: yaw_d += 180
+        u = ed; v = np.array([-u[1], u[0]])
+        pu = pts @ u; pv = pts @ v
+        bbox = np.array([
+            pu.min()*u + pv.min()*v, pu.max()*u + pv.min()*v,
+            pu.max()*u + pv.max()*v, pu.min()*u + pv.max()*v,
+        ])
+        return {"hull_pts": hull_pts, "edge": (p1, p2),
+                "bbox": bbox, "yaw_deg": yaw_d, "direction": u}
 
     def _run_pose_and_show(self):
         try:
@@ -1115,31 +1299,13 @@ class AutoBBoxValidationDialog(QDialog):
             u     = bbox_result["direction"]
             mean_xz = pts.mean(axis=0)
 
-            ax.scatter(pts[:, 0], pts[:, 1], s=2, alpha=0.25, color="#4fc3f7")
-            ax.scatter(hull[:, 0], hull[:, 1], c="white", s=8)
-
-            ax.plot([p1[0], p2[0]], [p1[1], p2[1]], "r", linewidth=3, label="Ref edge")
-
-            bb = np.vstack([bbox, bbox[0]])
-            ax.plot(bb[:, 0], bb[:, 1], "g--", linewidth=1.5, label="Aligned BB")
-
-            scale = 0.5 * np.linalg.norm(pts.max(0) - pts.min(0))
-            ax.plot([mean_xz[0] - scale * u[0], mean_xz[0] + scale * u[0]],
-                    [mean_xz[1] - scale * u[1], mean_xz[1] + scale * u[1]],
-                    "r--", linewidth=1, label=f"Yaw {yaw_deg:.1f}°")
-
-        ax.set_xlabel("X (m)", color="#d4d4d4")
-        ax.set_ylabel("Z (m)", color="#d4d4d4")
-        ax.set_title(f"Top-down view — yaw = {yaw_deg:.1f}°", color="#d4d4d4")
-        ax.axis("equal")
-        ax.grid(True, color="#333")
-        ax.legend(fontsize=8)
-        ax.set_facecolor("#1a1a2e")
-        self._topdown_fig.set_facecolor("#1e1e1e")
-        ax.tick_params(colors="#d4d4d4")
-        self._topdown_canvas.draw()
+            self._last_points_xz = pts   # stored for live column-density redraw
+            self._rebuild_col_cache()    # precompute column counts for slider
 
         self._accept_btn.setEnabled(True)
+        # Redraw via the slider so the initial view always reflects the active
+        # density threshold (default 15) rather than a separate code path.
+        self._on_col_density_changed(self._col_density_slider.value())
 
     # ------------------------------------------------------------------
     # Navigation

@@ -2350,6 +2350,9 @@ class LabelEditorWindow(QMainWindow):
             "height":      img_h,
             "annotations": new_anns,
         }
+        if self._current_user:
+            frame_doc["annotated_by"] = self._current_user["username"]
+            frame_doc["annotated_at"] = datetime.datetime.now().isoformat(timespec="seconds")
         out_path = os.path.join(self._annotations_dir, f"{frame_id}.json")
         with open(out_path, "w") as f:
             json.dump(frame_doc, f, indent=2)
@@ -2393,11 +2396,35 @@ class LabelEditorWindow(QMainWindow):
         return False
 
     def _frame_meta(self, frame_id: str) -> dict:
-        """Return the status dict for a frame from the project file, or {} if absent."""
+        """Return the status dict for a frame from the project file, or {} if absent.
+
+        If the local project file lacks annotated_by for this frame, falls back to
+        the annotated_by field stored inside the annotation JSON file (which travels
+        with git so it reflects who actually annotated each frame).
+        """
         if not self._dataset_root:
             return {}
         data = _load_project_file(self._dataset_root)
-        return (data or {}).get("frame_status", {}).get(frame_id, {})
+        meta = dict((data or {}).get("frame_status", {}).get(frame_id, {}))
+
+        # Backfill from annotation JSON if local metadata is missing annotator info.
+        if not meta.get("annotated_by") and self._annotations_dir:
+            doc = self._load_frame_doc(frame_id)
+            if doc and doc.get("annotated_by"):
+                meta["annotated_by"] = doc["annotated_by"]
+                if doc.get("annotated_at"):
+                    meta["annotated_at"] = doc["annotated_at"]
+                # Treat presence of annotated_by in the JSON as evidence the frame
+                # was manually annotated, so the display condition is satisfied.
+                meta.setdefault("manually_modified", True)
+                # Persist to local project file so future calls are fast.
+                self._update_frame_meta(frame_id, {
+                    "annotated_by":      meta["annotated_by"],
+                    "annotated_at":      meta.get("annotated_at", ""),
+                    "manually_modified": True,
+                })
+
+        return meta
 
     def _apply_file_filter(self):
         mode = self._filter_combo.currentText()

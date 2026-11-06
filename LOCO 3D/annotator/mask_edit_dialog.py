@@ -956,29 +956,50 @@ class MaskEditDialog(QDialog):
             return
         super().keyPressEvent(event)
 
+    def _prompt_save_on_close(self) -> str:
+        """
+        Show Save / Discard / Cancel dialog when closing with unsaved changes.
+        Returns 'save', 'discard', or 'cancel'.
+        """
+        from PyQt5.QtWidgets import QDialogButtonBox as _DBB
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Unsaved mask changes")
+        vl = QVBoxLayout(dlg)
+        vl.addWidget(QLabel("You have unsaved mask changes.\nWhat would you like to do?"))
+        btn_row = QHBoxLayout()
+        btn_save    = QPushButton("Save masks")
+        btn_discard = QPushButton("Discard")
+        btn_cancel  = QPushButton("Cancel")
+        btn_row.addWidget(btn_save)
+        btn_row.addWidget(btn_discard)
+        btn_row.addWidget(btn_cancel)
+        vl.addLayout(btn_row)
+        choice = ["cancel"]
+        btn_save.clicked.connect(   lambda: (choice.__setitem__(0, "save"),    dlg.accept()))
+        btn_discard.clicked.connect(lambda: (choice.__setitem__(0, "discard"), dlg.accept()))
+        btn_cancel.clicked.connect( dlg.reject)
+        dlg.exec_()
+        return choice[0]
+
     def reject(self):
         if self._masks_dirty():
-            reply = QMessageBox.question(
-                self, "Discard changes?",
-                "You have unsaved mask changes. Discard them and close?",
-                QMessageBox.Discard | QMessageBox.Cancel,
-                QMessageBox.Cancel,
-            )
-            if reply != QMessageBox.Discard:
+            action = self._prompt_save_on_close()
+            if action == "cancel":
                 return
+            if action == "save":
+                self._save_txt()
+                self.masks_saved.emit(self._mask_class_info())
         super().reject()
 
     def closeEvent(self, event):
         if self._masks_dirty():
-            reply = QMessageBox.question(
-                self, "Discard changes?",
-                "You have unsaved mask changes. Discard them and close?",
-                QMessageBox.Discard | QMessageBox.Cancel,
-                QMessageBox.Cancel,
-            )
-            if reply != QMessageBox.Discard:
+            action = self._prompt_save_on_close()
+            if action == "cancel":
                 event.ignore()
                 return
+            if action == "save":
+                self._save_txt()
+                self.masks_saved.emit(self._mask_class_info())
         event.accept()
 
     def _masks_dirty(self) -> bool:

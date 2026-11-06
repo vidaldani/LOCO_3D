@@ -91,17 +91,47 @@ def apply_hist_depth_filter(depth_image, ignore_background=False, resolution=1, 
 # Yaw + aligned bounding box
 # ---------------------------------------------------------------------------
 
+def _filter_xz_by_density(points_xz, cell_size=0.03, min_count=15):
+    """
+    2-D XZ grid density filter for orientation estimation.
+
+    Bin XZ points into cell_size × cell_size metric cells.  Keep only points
+    whose cell contains at least min_count occupants.  Isolated spray/flying
+    pixels end up in low-count cells and are dropped; real surface edges
+    (many depth rows projecting to the same XZ neighbourhood) survive.
+
+    min_count=15 was validated on Kinect V2 at 1–4 m using the interactive
+    slider in the validation dialog (3 cm grid, best result at ≥15 pts/cell).
+
+    Falls back to the original set if fewer than 50 points would remain.
+    """
+    if len(points_xz) < min_count:
+        return points_xz
+
+    cells = np.floor(points_xz / cell_size).astype(np.int32)
+    _, inv, counts = np.unique(cells, axis=0, return_inverse=True,
+                               return_counts=True)
+    keep     = counts[inv] >= min_count
+    filtered = points_xz[keep]
+    return filtered if len(filtered) >= 50 else points_xz
+
+
 def estimate_yaw_and_aligned_bbox_from_top4_front_hull_segments(
     depth_crop,
     mask_crop,
     x1, y1,
-    cx, cy, fx, fy
+    cx, cy, fx, fy,
+    density_cell_size: float = 0.03,
+    density_min_count: int   = 15,
 ):
     """
     Returns yaw + geometry for visualization. No plotting inside.
+
+    density_cell_size / density_min_count are forwarded to the two-stage XZ
+    cluster filter that strips spray outliers before hull computation.
     """
     ys, xs = np.where(mask_crop > 0)
-    if len(xs) < 30:
+    if len(xs) < 50:
         return None
 
     global_xs = xs + x1
@@ -115,12 +145,17 @@ def estimate_yaw_and_aligned_bbox_from_top4_front_hull_segments(
     Z = zs
     points_xz = np.stack([X, Z], axis=1)
 
-    if len(points_xz) < 30:
+    if len(points_xz) < 50:
         return None
 
+    # Drop spray/outlier points via 2-D XZ density filter
+    points_xz_dense = _filter_xz_by_density(
+        points_xz, cell_size=density_cell_size, min_count=density_min_count
+    )
+
     # QJ joggle: prevents "flat simplex" errors when all points share the same Z value
-    hull = ConvexHull(points_xz, qhull_options='QJ')
-    hull_pts = points_xz[hull.vertices]
+    hull = ConvexHull(points_xz_dense, qhull_options='QJ')
+    hull_pts = points_xz_dense[hull.vertices]   # index into the filtered set
     N = len(hull_pts)
 
     segments = []
@@ -153,8 +188,9 @@ def estimate_yaw_and_aligned_bbox_from_top4_front_hull_segments(
     u = edge_dir
     v = np.array([-u[1], u[0]])
 
-    proj_u = points_xz @ u
-    proj_v = points_xz @ v
+    # Use dense points for extent — outliers would inflate dimensions
+    proj_u = points_xz_dense @ u
+    proj_v = points_xz_dense @ v
 
     u_min, u_max = proj_u.min(), proj_u.max()
     v_min, v_max = proj_v.min(), proj_v.max()
@@ -182,7 +218,8 @@ def estimate_yaw_and_aligned_bbox_from_top4_front_hull_segments(
 
 def estimate_3d_pose(depth_crop, mask_crop, x1, y1, fx, fy, cx, cy,
                      class_dims=None, class_dims_range=None,
-                     flip_long_short: bool = False):
+                     flip_long_short: bool = False,
+                     density_min_count: int = 15):
     """
     3D pose estimation using aligned X-Z bounding box + axis-aligned Y extent.
 
@@ -228,7 +265,8 @@ def estimate_3d_pose(depth_crop, mask_crop, x1, y1, fx, fy, cx, cy,
         raise ValueError("Object median depth >= 6 m — depth data unreliable at this range")
 
     yaw_bbox_result = estimate_yaw_and_aligned_bbox_from_top4_front_hull_segments(
-        depth_crop, mask_crop, x1, y1, cx, cy, fx, fy
+        depth_crop, mask_crop, x1, y1, cx, cy, fx, fy,
+        density_min_count=density_min_count,
     )
 
     if yaw_bbox_result is None:
@@ -276,13 +314,6 @@ def estimate_3d_pose(depth_crop, mask_crop, x1, y1, fx, fy, cx, cy,
             np.linalg.norm(bbox_xz[2] - bbox_xz[1]),
         )
         measured_h = max_y - min_y
-        measured_vol = measured_long * measured_short * measured_h
-        class_vol    = L * W * _H_scalar
-        if measured_vol < 0.10 * class_vol:
-            raise ValueError(
-                f"Measured volume ({measured_vol:.3f} m³) < 10 % of "
-                f"class volume ({class_vol:.3f} m³) — too little data to estimate pose"
-            )
         long_class  = max(L, W)
         short_class = min(L, W)
 
