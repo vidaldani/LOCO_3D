@@ -1662,12 +1662,24 @@ class GitCommitPushWorker(QThread):
                 self.done.emit(False, f"git commit failed:\n{r.stderr.strip()}")
                 return
 
-            self.progress.emit("Pushing to remote…")
-            r = self._git("push", "--set-upstream", "origin", "main", timeout=90)
-            if r.returncode == 0:
-                self.done.emit(True, "Annotations committed and pushed successfully.")
+            # Push to every configured remote so GitLab and GitHub stay in sync.
+            remotes = [
+                l.strip() for l in self._git("remote").stdout.splitlines() if l.strip()
+            ]
+            if not remotes:
+                self.done.emit(True, "Annotations committed (no remote configured).")
+                return
+            errors = []
+            for i, remote in enumerate(remotes):
+                label = f"Pushing to {remote}… ({i+1}/{len(remotes)})"
+                self.progress.emit(label)
+                r = self._git("push", "--set-upstream", remote, "main", timeout=90)
+                if r.returncode != 0:
+                    errors.append(f"{remote}: {r.stderr.strip()}")
+            if errors:
+                self.done.emit(False, "git push failed for:\n" + "\n".join(errors))
             else:
-                self.done.emit(False, f"git push failed:\n{r.stderr.strip()}")
+                self.done.emit(True, "Annotations committed and pushed successfully.")
 
         except subprocess.TimeoutExpired:
             self.done.emit(False, "Git operation timed out.")
