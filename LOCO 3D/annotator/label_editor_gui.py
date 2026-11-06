@@ -1663,7 +1663,7 @@ class GitCommitPushWorker(QThread):
                 return
 
             self.progress.emit("Pushing to remote…")
-            r = self._git("push", timeout=90)
+            r = self._git("push", "--set-upstream", "origin", "main", timeout=90)
             if r.returncode == 0:
                 self.done.emit(True, "Annotations committed and pushed successfully.")
             else:
