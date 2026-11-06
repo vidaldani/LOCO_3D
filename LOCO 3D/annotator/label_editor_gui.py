@@ -2407,8 +2407,11 @@ class LabelEditorWindow(QMainWindow):
         data = _load_project_file(self._dataset_root)
         meta = dict((data or {}).get("frame_status", {}).get(frame_id, {}))
 
-        # Backfill from annotation JSON if local metadata is missing annotator info.
-        if not meta.get("annotated_by") and self._annotations_dir:
+        # Backfill from annotation JSON when local metadata doesn't have both
+        # manually_modified=True and annotated_by.  A frame that was only viewed
+        # (not saved) gets annotated_by written locally without manually_modified,
+        # so we must look at the JSON to get the real annotator.
+        if not (meta.get("manually_modified") and meta.get("annotated_by")) and self._annotations_dir:
             doc = self._load_frame_doc(frame_id)
             if doc and doc.get("annotated_by"):
                 meta["annotated_by"] = doc["annotated_by"]
