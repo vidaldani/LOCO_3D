@@ -60,21 +60,21 @@
       "iscrowd": 0,
       "bbox_3d": {
         "center": {
-          "x": 1.099,
-          "y": 0.24699999999999994,
-          "z": 1.98
+          "x": 1.069,
+          "y": 0.237,
+          "z": 2.03
         },
         "dimensions": {
           "height": 0.144,
           "width": 0.8,
-          "length": 1.0499999999999998
+          "length": 1.05
         },
         "yaw": 0.6806784082777885,
-        "rx": 0.0,
-        "rz": -2.0
+        "rx": -1.0,
+        "rz": -5.0
       }
     }
   ],
-  "annotated_by": "dan.vidal",
-  "annotated_at": "2026-11-06T10:33:00"
+  "annotated_by": "bo.shi",
+  "annotated_at": "2026-11-12T08:48:42"
 }
