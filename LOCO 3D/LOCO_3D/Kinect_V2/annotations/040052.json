@@ -32,9 +32,9 @@
       "iscrowd": 0,
       "bbox_3d": {
         "center": {
-          "x": 1.193,
+          "x": 1.233,
           "y": 0.266,
-          "z": 1.5810000000000002
+          "z": 1.591
         },
         "dimensions": {
           "height": 0.112,
@@ -87,5 +87,5 @@
     }
   ],
   "annotated_by": "bo.shi",
-  "annotated_at": "2026-11-09T20:43:39"
+  "annotated_at": "2026-11-13T21:46:32"
 }
