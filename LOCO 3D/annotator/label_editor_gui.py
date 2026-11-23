@@ -3936,10 +3936,9 @@ class LabelEditorWindow(QMainWindow):
         already = self._frame_meta(self.current_frame_id).get("flagged", False)
         prompt = ("Update flag comment:" if already
                   else "Describe the issue with this frame:")
-        from PyQt5.QtWidgets import QInputDialog
         while True:
-            comment, ok = QInputDialog.getMultiLineText(
-                self, "🚩 Flag frame", prompt,
+            comment, ok = self._ask_comment(
+                "🚩 Flag frame", prompt,
                 self._frame_meta(self.current_frame_id).get("flag_comment", "") if already else "")
             if not ok:
                 return
@@ -4026,6 +4025,32 @@ class LabelEditorWindow(QMainWindow):
 
         dlg.exec_()
 
+    def _ask_comment(self, title: str, prompt: str, prefill: str = "") -> tuple[str, bool]:
+        """Wide, low-height text-input dialog. Returns (text, accepted)."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
+        dlg.setModal(True)
+        dlg.setMinimumWidth(540)
+        dlg.setMaximumHeight(200)
+        dlg.setStyleSheet(self.styleSheet())
+        vbox = QVBoxLayout(dlg)
+        vbox.setSpacing(8)
+        vbox.setContentsMargins(14, 12, 14, 12)
+        lbl = QLabel(prompt)
+        lbl.setStyleSheet("font-size:12px;")
+        vbox.addWidget(lbl)
+        edit = QLineEdit(prefill)
+        edit.setMinimumWidth(500)
+        edit.setStyleSheet("font-size:12px; padding:5px;")
+        vbox.addWidget(edit)
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        vbox.addWidget(btns)
+        edit.setFocus()
+        ok = dlg.exec_() == QDialog.Accepted
+        return edit.text(), ok
+
     def _get_or_init_review(self, frame_id: str) -> dict:
         """Return the review dict for frame_id, creating it if absent."""
         meta = self._frame_meta(frame_id)
@@ -4045,9 +4070,7 @@ class LabelEditorWindow(QMainWindow):
 
     def _add_review_item(self, frame_id: str, object_index: int, review_type: str):
         """Prompt admin for a comment and add/update a review item for the given object."""
-        from PyQt5.QtWidgets import QInputDialog
         review = self._get_or_init_review(frame_id)
-        # Find existing item for this (object_index, type) to pre-fill
         existing_item = next(
             (it for it in review["items"]
              if it.get("object_index") == object_index and it.get("type") == review_type),
@@ -4056,8 +4079,8 @@ class LabelEditorWindow(QMainWindow):
         existing_comment = existing_item.get("comment", "") if existing_item else ""
         prompt = f"Review for ID [{object_index}] {review_type}:"
         while True:
-            comment, ok = QInputDialog.getMultiLineText(
-                self, f"📝 Review — {review_type}", prompt, existing_comment)
+            comment, ok = self._ask_comment(
+                f"📝 Review — {review_type}", prompt, existing_comment)
             if not ok:
                 return
             if comment.strip():
@@ -4145,9 +4168,8 @@ class LabelEditorWindow(QMainWindow):
         vbox.addWidget(close_btn)
 
         def _add_general():
-            from PyQt5.QtWidgets import QInputDialog as QID
-            comment, ok = QID.getMultiLineText(
-                dlg, "📝 General review",
+            comment, ok = self._ask_comment(
+                "📝 General review",
                 "Comment (missing objects, missing masks, general issues):", "")
             if not ok or not comment.strip():
                 return
