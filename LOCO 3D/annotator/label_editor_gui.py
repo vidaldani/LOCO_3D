@@ -25,6 +25,7 @@ from PyQt5.QtWidgets import (
     QDialog, QComboBox, QDialogButtonBox, QFormLayout, QDoubleSpinBox,
     QStyle, QCheckBox, QSizePolicy, QScrollArea, QFrame, QProgressBar,
     QInputDialog, QTabWidget, QTreeWidget, QTreeWidgetItem, QHeaderView,
+    QRadioButton, QButtonGroup, QToolButton,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRect, QEvent
 from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QIcon
