@@ -1662,17 +1662,28 @@ class GitCommitPushWorker(QThread):
                 self.done.emit(False, f"git commit failed:\n{r.stderr.strip()}")
                 return
 
-            # Push to every configured remote so GitLab and GitHub stay in sync.
             remotes = [
                 l.strip() for l in self._git("remote").stdout.splitlines() if l.strip()
             ]
             if not remotes:
                 self.done.emit(True, "Annotations committed (no remote configured).")
                 return
+
+            # Pull --rebase before pushing so we don't get rejected if a
+            # teammate pushed while the app was open.
+            self.progress.emit("Syncing with remote before push…")
+            r = self._git("pull", "--rebase", "origin", "main", timeout=90)
+            if r.returncode != 0:
+                self.done.emit(
+                    False,
+                    "git pull --rebase failed before push:\n" + r.stderr.strip()
+                    + "\nResolve conflicts in a terminal, then reopen the app.",
+                )
+                return
+
             errors = []
             for i, remote in enumerate(remotes):
-                label = f"Pushing to {remote}… ({i+1}/{len(remotes)})"
-                self.progress.emit(label)
+                self.progress.emit(f"Pushing to {remote}… ({i+1}/{len(remotes)})")
                 r = self._git("push", "--set-upstream", remote, "main", timeout=90)
                 if r.returncode != 0:
                     errors.append(f"{remote}: {r.stderr.strip()}")
