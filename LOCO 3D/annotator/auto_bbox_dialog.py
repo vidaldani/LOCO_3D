@@ -1108,6 +1108,19 @@ class AutoBBoxValidationDialog(QDialog):
 
         cache = getattr(self, "_col_cache", None)
         if cache is None:
+            ax = (self._topdown_fig.clf(), self._topdown_fig.add_subplot(1, 1, 1))[1]
+            ax.text(0.5, 0.5,
+                    "No valid depth returns in the filtered mask.\n"
+                    "The sensor has holes here.\n\n"
+                    "→ Accept to save the segmentation mask only,\n"
+                    "   then add the 3D BB manually in the editor.\n"
+                    "   (Use '− Remove Object' → 'Remove 3D BB only'\n"
+                    "    if you want to keep just the mask.)",
+                    transform=ax.transAxes, ha="center", va="center",
+                    fontsize=9, color="#e05252",
+                    bbox=dict(boxstyle="round,pad=0.4", fc="#1e1e1e", ec="#e05252"))
+            ax.set_axis_off()
+            self._topdown_canvas.draw()
             return
 
         pts_all        = cache["pts_all"]

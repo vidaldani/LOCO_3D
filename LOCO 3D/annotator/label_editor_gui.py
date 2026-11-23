@@ -2891,57 +2891,109 @@ class LabelEditorWindow(QMainWindow):
         else:
             os.remove(txt_path)
 
+    def _ask_remove_mode(self) -> str | None:
+        """Ask user whether to remove the 3D BB only or the full object (BB + mask).
+        Returns 'bb_only', 'full', or None (cancelled)."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Remove object")
+        dlg.setModal(True)
+        v = QVBoxLayout(dlg)
+        v.addWidget(QLabel("What do you want to remove?"))
+        rb_bb   = QRadioButton("Remove 3D bounding box only  (keep segmentation mask)")
+        rb_full = QRadioButton("Remove 3D BB and segmentation mask")
+        rb_full.setChecked(True)
+        v.addWidget(rb_bb)
+        v.addWidget(rb_full)
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        v.addWidget(btns)
+        if dlg.exec_() != QDialog.Accepted:
+            return None
+        return "bb_only" if rb_bb.isChecked() else "full"
+
+    def _clear_obj_3d_bb(self, obj: dict):
+        """Zero out the 3D BB fields and mark the object as having no 3D BB."""
+        obj["no_3d_bb"] = True
+        obj["centroid"]   = {"x": 0.0, "y": 0.0, "z": 0.0}
+        obj["dimensions"] = {"length": 0.0, "width": 0.0, "height": 0.0}
+        obj["rotations"]  = {"x": 0.0, "y": 0.0, "z": 0.0}
+
     def _on_remove_object(self):
         checked_indices = [
             i for i in range(self.object_list.count())
             if self.object_list.item(i).checkState() == Qt.Checked
         ]
+
+        mode = self._ask_remove_mode()
+        if mode is None:
+            return
+
         if checked_indices:
             self._sync_active()
-            objs_removed = [self.current_objects[i] for i in checked_indices]
-            self._active_widget = None
-            self._selected_obj_idx = -1
-            self.object_list.blockSignals(True)
-            for idx in sorted(checked_indices, reverse=True):
-                del self.current_objects[idx]
-                self.object_list.takeItem(idx)
-            for i in range(self.object_list.count()):
-                self.object_list.item(i).setText(f"[{i}]  {self.current_objects[i]['name']}")
-            self.object_list.blockSignals(False)
-            self._dirty = True
-            new_row = min(checked_indices[0], self.object_list.count() - 1)
-            if new_row >= 0:
-                self.object_list.setCurrentRow(new_row)
-            self._remove_seg_masks_for_objs(objs_removed)
-            self._render_scene()
-            if self.current_frame_id:
-                self._load_rgb_image(self.current_frame_id)
-            self._update_status(
-                f"Removed {len(checked_indices)} object(s) — {len(self.current_objects)} remaining")
+            target_objs = [self.current_objects[i] for i in checked_indices]
+
+            if mode == "bb_only":
+                for obj in target_objs:
+                    self._clear_obj_3d_bb(obj)
+                self._dirty = True
+                self._render_scene()
+                self._update_status(
+                    f"Cleared 3D BB for {len(checked_indices)} object(s) — mask(s) kept")
+            else:
+                self._active_widget = None
+                self._selected_obj_idx = -1
+                self.object_list.blockSignals(True)
+                for idx in sorted(checked_indices, reverse=True):
+                    del self.current_objects[idx]
+                    self.object_list.takeItem(idx)
+                for i in range(self.object_list.count()):
+                    self.object_list.item(i).setText(f"[{i}]  {self.current_objects[i]['name']}")
+                self.object_list.blockSignals(False)
+                self._dirty = True
+                new_row = min(checked_indices[0], self.object_list.count() - 1)
+                if new_row >= 0:
+                    self.object_list.setCurrentRow(new_row)
+                self._remove_seg_masks_for_objs(target_objs)
+                self._render_scene()
+                if self.current_frame_id:
+                    self._load_rgb_image(self.current_frame_id)
+                self._update_status(
+                    f"Removed {len(checked_indices)} object(s) — {len(self.current_objects)} remaining")
         else:
             row = self.object_list.currentRow()
             if row < 0:
                 return
             self._sync_active()
-            obj_removed = self.current_objects[row]
-            removed_name = obj_removed["name"]
-            del self.current_objects[row]
-            self.object_list.blockSignals(True)
-            self.object_list.takeItem(row)
-            for i in range(self.object_list.count()):
-                self.object_list.item(i).setText(f"[{i}]  {self.current_objects[i]['name']}")
-            self.object_list.blockSignals(False)
-            # Reset stale widget/index BEFORE setCurrentRow so _sync_active is a no-op
-            self._active_widget = None
-            self._selected_obj_idx = -1
-            self._dirty = True
-            new_row = min(row, self.object_list.count() - 1)
-            self.object_list.setCurrentRow(new_row)
-            self._remove_seg_masks_for_objs([obj_removed])
-            self._render_scene()
-            if self.current_frame_id:
-                self._load_rgb_image(self.current_frame_id)
-            self._update_status(f"Removed '{removed_name}' — {len(self.current_objects)} object(s)")
+            obj = self.current_objects[row]
+
+            if mode == "bb_only":
+                self._clear_obj_3d_bb(obj)
+                self._dirty = True
+                # Reload the properties panel so spinboxes reflect the cleared values
+                if self._active_widget:
+                    self._active_widget.load_object(obj)
+                self._render_scene()
+                self._update_status(f"Cleared 3D BB for '{obj['name']}' — mask kept")
+            else:
+                removed_name = obj["name"]
+                del self.current_objects[row]
+                self.object_list.blockSignals(True)
+                self.object_list.takeItem(row)
+                for i in range(self.object_list.count()):
+                    self.object_list.item(i).setText(f"[{i}]  {self.current_objects[i]['name']}")
+                self.object_list.blockSignals(False)
+                # Reset stale widget/index BEFORE setCurrentRow so _sync_active is a no-op
+                self._active_widget = None
+                self._selected_obj_idx = -1
+                self._dirty = True
+                new_row = min(row, self.object_list.count() - 1)
+                self.object_list.setCurrentRow(new_row)
+                self._remove_seg_masks_for_objs([obj])
+                self._render_scene()
+                if self.current_frame_id:
+                    self._load_rgb_image(self.current_frame_id)
+                self._update_status(f"Removed '{removed_name}' — {len(self.current_objects)} object(s)")
 
     def _ensure_active_checked(self):
         """On first Ctrl+click, also check the currently active object so it joins the selection."""
