@@ -908,40 +908,95 @@ class _FlagCommentDialog(QDialog):
         self.accept()
 
 
-class _ReviewDialog(QDialog):
-    """Shown to a student when the instructor has left a review on a frame."""
+class _ReviewChecklistDialog(QDialog):
+    """Shown to a student when the instructor has left per-object review items.
 
-    def __init__(self, review: dict, parent=None):
+    Each item is a row with a checkbox (resolved?), the review text, and a
+    response field.  The dialog returns the updated items list via .items.
+    """
+
+    def __init__(self, review: dict, read_only: bool = False, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("📝 Instructor review")
+        title = "📝 Instructor review" + ("  [read-only]" if read_only else "")
+        self.setWindowTitle(title)
         self.setModal(True)
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(560)
+        self.setMinimumHeight(300)
+        self.items = [dict(it) for it in review.get("items", [])]  # working copy
 
         layout = QVBoxLayout(self)
-        layout.setSpacing(10)
+        layout.setSpacing(8)
         layout.setContentsMargins(14, 14, 14, 14)
 
-        reviewer = review.get("reviewer", "instructor")
+        reviewer   = review.get("reviewer", "instructor")
         reviewed_at = review.get("reviewed_at", "")
         info = QLabel(f"<b>Review from:</b> {reviewer}   <b>at:</b> {reviewed_at}")
         info.setWordWrap(True)
         layout.addWidget(info)
 
-        comment_box = QLabel(review.get("comment", "(no comment)"))
-        comment_box.setWordWrap(True)
-        comment_box.setStyleSheet(
-            "background:#1e2d1e; color:#e0e0e0; padding:10px;"
-            "border-radius:4px; font-size:13px; border: 1px solid #4caf50;"
+        if not read_only:
+            note = QLabel("<i>Check each item when you have fixed it and optionally add a comment.</i>")
+            note.setStyleSheet("color:#888; font-size:11px;")
+            layout.addWidget(note)
+
+        # Scroll area with one row per item
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        inner = QWidget()
+        grid = QGridLayout(inner)
+        grid.setSpacing(6)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(2, 1)
+
+        grid.addWidget(QLabel("<b>Done</b>"), 0, 0)
+        grid.addWidget(QLabel("<b>Issue</b>"), 0, 1)
+        grid.addWidget(QLabel("<b>Your response</b>"), 0, 2)
+
+        self._checkboxes: list[QCheckBox]  = []
+        self._responses:  list[QLineEdit]  = []
+
+        for row_i, item in enumerate(self.items, 1):
+            idx   = item.get("object_index", "?")
+            itype = item.get("type", "")
+            label_text = f"ID [{idx}] {itype}: {item.get('comment', '')}"
+
+            cb = QCheckBox()
+            cb.setChecked(bool(item.get("resolved", False)))
+            cb.setEnabled(not read_only)
+            self._checkboxes.append(cb)
+
+            lbl = QLabel(label_text)
+            lbl.setWordWrap(True)
+            lbl.setStyleSheet(
+                "background:#1e2d1e; color:#e0e0e0; padding:6px;"
+                "border-radius:3px; border:1px solid #4caf50;"
+            )
+
+            resp = QLineEdit(item.get("resolve_comment", ""))
+            resp.setPlaceholderText("Add a comment…")
+            resp.setEnabled(not read_only)
+            self._responses.append(resp)
+
+            grid.addWidget(cb,   row_i, 0, Qt.AlignTop)
+            grid.addWidget(lbl,  row_i, 1)
+            grid.addWidget(resp, row_i, 2)
+
+        scroll.setWidget(inner)
+        layout.addWidget(scroll, stretch=1)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.Ok if not read_only else QDialogButtonBox.Close
         )
-        layout.addWidget(comment_box)
-
-        note = QLabel("<i>Correct the annotation, then save and push.</i>")
-        note.setStyleSheet("color:#888; font-size:11px;")
-        layout.addWidget(note)
-
-        btns = QDialogButtonBox(QDialogButtonBox.Ok)
-        btns.accepted.connect(self.accept)
+        btns.accepted.connect(self._on_accept)
+        btns.rejected.connect(self.reject)
         layout.addWidget(btns)
+
+    def _on_accept(self):
+        for i, item in enumerate(self.items):
+            item["resolved"]        = self._checkboxes[i].isChecked()
+            item["resolve_comment"] = self._responses[i].text().strip()
+        self.accept()
 
 
 class _BootstrapAdminDialog(QDialog):
@@ -2670,21 +2725,20 @@ class LabelEditorWindow(QMainWindow):
             if not anns:
                 self._update_status(f"{frame_id} — no COCO annotations yet")
 
-            # Show review notification when an annotator opens a frame reviewed for them
+            # Show review checklist when annotator opens a frame that has pending items
             meta = self._frame_meta(frame_id)
             review = meta.get("review")
-            if review:
-                my_name = (self._current_user or {}).get("username", "")
-                seen_key = f"review_seen_{frame_id}"
-                already_seen = (self._cfg or {}).get(seen_key)
-                is_for_me = review.get("for") == my_name or not review.get("for")
+            if review and review.get("items"):
+                my_name  = (self._current_user or {}).get("username", "")
                 is_admin = (self._current_user or {}).get("role") == "admin"
-                if is_for_me and not is_admin and not already_seen:
-                    dlg = _ReviewDialog(review, parent=self)
+                is_for_me = review.get("for") == my_name or not review.get("for")
+                has_open  = any(not it.get("resolved") for it in review["items"])
+                if is_for_me and not is_admin and has_open:
+                    dlg = _ReviewChecklistDialog(review, read_only=False, parent=self)
                     dlg.setStyleSheet(self.styleSheet())
-                    dlg.exec_()
-                    self._cfg[seen_key] = True
-                    save_config(self._cfg)
+                    if dlg.exec_() == QDialog.Accepted:
+                        review["items"] = dlg.items
+                        self._save_review(frame_id, review)
         elif self.labels_dir:
             label_path = os.path.join(self.labels_dir, f"{frame_id}.json")
             if os.path.exists(label_path):
@@ -2773,13 +2827,22 @@ class LabelEditorWindow(QMainWindow):
         cen  = obj.get("centroid",  {})
         rots = obj.get("rotations", {})
 
+        is_admin = (self._current_user or {}).get("role") == "admin"
         menu = QMenu(self)
         copy_act  = menu.addAction("Copy pose (X, Z, Yaw)")
         paste_act = menu.addAction("Paste pose (X, Z, Yaw)")
         paste_act.setEnabled(self._copied_pose is not None)
+        review_bb_act = None
+        if is_admin and self.current_frame_id:
+            menu.addSeparator()
+            review_bb_act = menu.addAction(f"📝 Review 3D BB of [{row}]")
 
         action = menu.exec_(self.object_list.viewport().mapToGlobal(pos))
         if action is None:
+            return
+
+        if action is review_bb_act:
+            self._add_review_item(self.current_frame_id, row, "3D BB")
             return
 
         if action is copy_act:
@@ -3799,41 +3862,74 @@ class LabelEditorWindow(QMainWindow):
         self._update_status(f"Frame {self.current_frame_id} flagged.")
         self._apply_file_filter()
 
-    def _on_add_review(self):
-        """Admin writes a review for the annotator of the current frame."""
-        if self.current_frame_id is None:
-            QMessageBox.information(self, "No frame", "Load a frame first.")
-            return
-        if not self._annotations_dir:
-            QMessageBox.warning(self, "No project", "No annotation directory found.")
-            return
-        meta = self._frame_meta(self.current_frame_id)
-        annotator = meta.get("annotated_by", "")
-        if not annotator:
-            QMessageBox.information(self, "No annotator",
-                "This frame has no annotator recorded — save it first.")
-            return
+    def _get_or_init_review(self, frame_id: str) -> dict:
+        """Return the review dict for frame_id, creating it if absent."""
+        meta = self._frame_meta(frame_id)
+        review = meta.get("review") or {}
+        if not review.get("reviewer"):
+            review["reviewer"]    = (self._current_user or {}).get("username", "admin")
+            review["reviewed_at"] = datetime.datetime.now().isoformat(timespec="seconds")
+        review.setdefault("items", [])
+        review.setdefault("for", meta.get("annotated_by", ""))
+        return review
+
+    def _save_review(self, frame_id: str, review: dict):
+        """Write review to both JSON and local meta."""
+        review["reviewed_at"] = datetime.datetime.now().isoformat(timespec="seconds")
+        self._patch_frame_json(frame_id, {"review": review})
+        self._update_frame_meta(frame_id, {"review": review})
+
+    def _add_review_item(self, frame_id: str, object_index: int, review_type: str):
+        """Prompt admin for a comment and add/update a review item for the given object."""
         from PyQt5.QtWidgets import QInputDialog
-        existing = (meta.get("review") or {}).get("comment", "")
-        prompt = f"Review for {annotator} on frame {self.current_frame_id}:"
+        review = self._get_or_init_review(frame_id)
+        # Find existing item for this (object_index, type) to pre-fill
+        existing_item = next(
+            (it for it in review["items"]
+             if it.get("object_index") == object_index and it.get("type") == review_type),
+            None,
+        )
+        existing_comment = existing_item.get("comment", "") if existing_item else ""
+        prompt = f"Review for ID [{object_index}] {review_type}:"
         while True:
             comment, ok = QInputDialog.getMultiLineText(
-                self, "📝 Add review", prompt, existing)
+                self, f"📝 Review — {review_type}", prompt, existing_comment)
             if not ok:
                 return
             if comment.strip():
                 break
-            QMessageBox.warning(self, "Comment required",
-                                "Please enter a review comment.")
-        review = {
-            "reviewer":    self._current_user["username"] if self._current_user else "admin",
-            "reviewed_at": datetime.datetime.now().isoformat(timespec="seconds"),
-            "comment":     comment.strip(),
-            "for":         annotator,
-        }
-        self._patch_frame_json(self.current_frame_id, {"review": review})
-        self._update_frame_meta(self.current_frame_id, {"review": review})
-        self._update_status(f"Review saved for frame {self.current_frame_id} → {annotator}.")
+            QMessageBox.warning(self, "Comment required", "Please enter a review comment.")
+        if existing_item:
+            existing_item["comment"]  = comment.strip()
+            existing_item["resolved"] = False
+            existing_item["resolve_comment"] = ""
+        else:
+            review["items"].append({
+                "object_index":    object_index,
+                "type":            review_type,
+                "comment":         comment.strip(),
+                "resolved":        False,
+                "resolve_comment": "",
+            })
+        self._save_review(frame_id, review)
+        self._update_status(
+            f"Review saved: ID [{object_index}] {review_type} — frame {frame_id}")
+
+    def _on_add_review(self):
+        """Show all current review items for this frame; admin can see/manage them."""
+        if self.current_frame_id is None:
+            QMessageBox.information(self, "No frame", "Load a frame first.")
+            return
+        meta = self._frame_meta(self.current_frame_id)
+        review = meta.get("review") or {}
+        if not review.get("items"):
+            QMessageBox.information(self, "No review items",
+                "No review items yet.\n\nRight-click an object in the list or the "
+                "image to add a review for its 3D BB or mask.")
+            return
+        dlg = _ReviewChecklistDialog(review, read_only=True, parent=self)
+        dlg.setStyleSheet(self.styleSheet())
+        dlg.exec_()
 
     def _on_remove_frame(self):
         if self.current_frame_id is None:
@@ -4313,13 +4409,22 @@ class LabelEditorWindow(QMainWindow):
         cen  = obj.get("centroid",  {})
         rots = obj.get("rotations", {})
 
+        is_admin = (self._current_user or {}).get("role") == "admin"
         menu = QMenu(self)
         copy_act  = menu.addAction("Copy pose (X, Z, Yaw)")
         paste_act = menu.addAction("Paste pose (X, Z, Yaw)")
         paste_act.setEnabled(self._copied_pose is not None)
+        review_mask_act = None
+        if is_admin and self.current_frame_id:
+            menu.addSeparator()
+            review_mask_act = menu.addAction(f"📝 Review Mask of [{row}]")
 
         action = menu.exec_(self._image_label.mapToGlobal(pos))
         if action is None:
+            return
+
+        if action is review_mask_act:
+            self._add_review_item(self.current_frame_id, row, "Mask")
             return
 
         if action is copy_act:
