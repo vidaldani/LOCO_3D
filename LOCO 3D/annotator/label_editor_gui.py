@@ -908,94 +908,168 @@ class _FlagCommentDialog(QDialog):
         self.accept()
 
 
-class _ReviewChecklistDialog(QDialog):
-    """Shown to a student when the instructor has left per-object review items.
+class _ReviewItemWidget(QFrame):
+    """One review item card: status toggle | tag | comment text | 💬 reply button.
+    A reply thread row appears indented below when the student clicks 💬."""
 
-    Each item is a row with a checkbox (resolved?), the review text, and a
-    response field.  The dialog returns the updated items list via .items.
-    """
+    def __init__(self, item: dict, read_only: bool, parent=None):
+        super().__init__(parent)
+        self._item      = item
+        self._read_only = read_only
+        self.setFrameShape(QFrame.StyledPanel)
+        resolved = bool(item.get("resolved"))
+        self._update_card_style(resolved)
+
+        outer = QVBoxLayout(self)
+        outer.setSpacing(4)
+        outer.setContentsMargins(8, 6, 8, 6)
+
+        # ── Main row ──────────────────────────────────────────────────────
+        main_row = QHBoxLayout()
+        main_row.setSpacing(8)
+
+        self._status_btn = QPushButton("✓" if resolved else "○")
+        self._status_btn.setFixedSize(28, 28)
+        self._status_btn.setCheckable(True)
+        self._status_btn.setChecked(resolved)
+        self._status_btn.setEnabled(not read_only)
+        self._status_btn.setStyleSheet(
+            "QPushButton{border-radius:14px; font-size:14px; "
+            "background:#2a5c2a; color:#4caf50;}"
+            "QPushButton:checked{background:#4caf50; color:#111;}"
+        )
+        self._status_btn.toggled.connect(self._on_toggle_resolved)
+        main_row.addWidget(self._status_btn)
+
+        # Tag: "ID [0] 3D BB" or "General"
+        idx   = item.get("object_index")
+        itype = item.get("type", "")
+        tag_text = ("General" if idx is None else f"ID [{idx}] {itype}")
+        tag = QLabel(tag_text)
+        tag.setStyleSheet(
+            "background:#1a3a5c; color:#9cdcfe; padding:2px 7px;"
+            "border-radius:3px; font-size:11px; font-weight:bold;"
+        )
+        tag.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
+        main_row.addWidget(tag)
+
+        comment_lbl = QLabel(item.get("comment", ""))
+        comment_lbl.setWordWrap(True)
+        comment_lbl.setStyleSheet("color:#e0e0e0; font-size:12px;")
+        main_row.addWidget(comment_lbl, stretch=1)
+
+        self._reply_btn = QPushButton("💬")
+        self._reply_btn.setFixedSize(28, 28)
+        self._reply_btn.setToolTip("Add / view reply")
+        self._reply_btn.setEnabled(not read_only)
+        self._reply_btn.setStyleSheet(
+            "QPushButton{border-radius:4px; font-size:14px;"
+            "background:transparent; border:1px solid #555;}"
+            "QPushButton:hover{background:#333;}"
+        )
+        self._reply_btn.clicked.connect(self._on_reply_clicked)
+        main_row.addWidget(self._reply_btn)
+
+        outer.addLayout(main_row)
+
+        # ── Reply thread row (hidden until 💬 clicked) ───────────────────
+        self._reply_row = QWidget()
+        reply_layout = QHBoxLayout(self._reply_row)
+        reply_layout.setContentsMargins(44, 0, 0, 0)  # indent to align under comment
+        reply_layout.setSpacing(6)
+
+        existing_reply = item.get("resolve_comment", "")
+        self._reply_input = QLineEdit(existing_reply)
+        self._reply_input.setPlaceholderText("Your reply…")
+        self._reply_input.setEnabled(not read_only)
+        reply_layout.addWidget(self._reply_input)
+
+        outer.addWidget(self._reply_row)
+        # Show thread if a reply already exists; otherwise hide
+        self._reply_row.setVisible(bool(existing_reply))
+
+    def _update_card_style(self, resolved: bool):
+        base = ("border-radius:5px; padding:2px; "
+                "border:1px solid ")
+        if resolved:
+            self.setStyleSheet(base + "#2a5c2a; background:#111a11;")
+        else:
+            self.setStyleSheet(base + "#5c3a1a; background:#1a1208;")
+
+    def _on_toggle_resolved(self, checked: bool):
+        self._status_btn.setText("✓" if checked else "○")
+        self._update_card_style(checked)
+        self._item["resolved"] = checked
+
+    def _on_reply_clicked(self):
+        self._reply_row.setVisible(not self._reply_row.isVisible())
+
+    def collect(self):
+        """Write widget state back into the item dict."""
+        self._item["resolve_comment"] = self._reply_input.text().strip()
+        return self._item
+
+
+class _ReviewChecklistDialog(QDialog):
+    """Thread-style review dialog.  Admin sees read-only cards; student can
+    toggle resolved and add replies via 💬 buttons."""
 
     def __init__(self, review: dict, read_only: bool = False, parent=None):
         super().__init__(parent)
         title = "📝 Instructor review" + ("  [read-only]" if read_only else "")
         self.setWindowTitle(title)
         self.setModal(True)
-        self.setMinimumWidth(560)
-        self.setMinimumHeight(300)
-        self.items = [dict(it) for it in review.get("items", [])]  # working copy
+        self.setMinimumWidth(580)
+        self.setMinimumHeight(320)
+        self.items = [dict(it) for it in review.get("items", [])]
 
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
-        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setContentsMargins(12, 12, 12, 12)
 
-        reviewer   = review.get("reviewer", "instructor")
+        reviewer    = review.get("reviewer", "instructor")
         reviewed_at = review.get("reviewed_at", "")
-        info = QLabel(f"<b>Review from:</b> {reviewer}   <b>at:</b> {reviewed_at}")
-        info.setWordWrap(True)
-        layout.addWidget(info)
+        hdr = QLabel(
+            f"<b>Review from {reviewer}</b> &nbsp;·&nbsp; "
+            f"<span style='color:#888;font-size:11px'>{reviewed_at}</span>"
+        )
+        hdr.setStyleSheet("font-size:13px; padding-bottom:4px;")
+        layout.addWidget(hdr)
 
         if not read_only:
-            note = QLabel("<i>Check each item when you have fixed it and optionally add a comment.</i>")
-            note.setStyleSheet("color:#888; font-size:11px;")
-            layout.addWidget(note)
+            hint = QLabel(
+                "Click <b>○</b> to mark fixed · click <b>💬</b> to reply")
+            hint.setStyleSheet("color:#888; font-size:11px;")
+            layout.addWidget(hint)
 
-        # Scroll area with one row per item
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         inner = QWidget()
-        grid = QGridLayout(inner)
-        grid.setSpacing(6)
-        grid.setColumnStretch(1, 1)
-        grid.setColumnStretch(2, 1)
+        inner_layout = QVBoxLayout(inner)
+        inner_layout.setSpacing(6)
+        inner_layout.setContentsMargins(0, 0, 0, 0)
 
-        grid.addWidget(QLabel("<b>Done</b>"), 0, 0)
-        grid.addWidget(QLabel("<b>Issue</b>"), 0, 1)
-        grid.addWidget(QLabel("<b>Your response</b>"), 0, 2)
+        self._item_widgets: list[_ReviewItemWidget] = []
+        for item in self.items:
+            w = _ReviewItemWidget(item, read_only=read_only, parent=inner)
+            w.setStyleSheet(w.styleSheet())
+            inner_layout.addWidget(w)
+            self._item_widgets.append(w)
 
-        self._checkboxes: list[QCheckBox]  = []
-        self._responses:  list[QLineEdit]  = []
-
-        for row_i, item in enumerate(self.items, 1):
-            idx   = item.get("object_index", "?")
-            itype = item.get("type", "")
-            label_text = f"ID [{idx}] {itype}: {item.get('comment', '')}"
-
-            cb = QCheckBox()
-            cb.setChecked(bool(item.get("resolved", False)))
-            cb.setEnabled(not read_only)
-            self._checkboxes.append(cb)
-
-            lbl = QLabel(label_text)
-            lbl.setWordWrap(True)
-            lbl.setStyleSheet(
-                "background:#1e2d1e; color:#e0e0e0; padding:6px;"
-                "border-radius:3px; border:1px solid #4caf50;"
-            )
-
-            resp = QLineEdit(item.get("resolve_comment", ""))
-            resp.setPlaceholderText("Add a comment…")
-            resp.setEnabled(not read_only)
-            self._responses.append(resp)
-
-            grid.addWidget(cb,   row_i, 0, Qt.AlignTop)
-            grid.addWidget(lbl,  row_i, 1)
-            grid.addWidget(resp, row_i, 2)
-
+        inner_layout.addStretch()
         scroll.setWidget(inner)
         layout.addWidget(scroll, stretch=1)
 
         btns = QDialogButtonBox(
-            QDialogButtonBox.Ok if not read_only else QDialogButtonBox.Close
+            QDialogButtonBox.Save if not read_only else QDialogButtonBox.Close
         )
         btns.accepted.connect(self._on_accept)
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
 
     def _on_accept(self):
-        for i, item in enumerate(self.items):
-            item["resolved"]        = self._checkboxes[i].isChecked()
-            item["resolve_comment"] = self._responses[i].text().strip()
+        self.items = [w.collect() for w in self._item_widgets]
         self.accept()
 
 
@@ -1902,6 +1976,7 @@ class LabelEditorWindow(QMainWindow):
             "Manually annotated",
             "Flagged frames",
             "Verified",
+            "With pending reviews",
         ])
         self._filter_combo.setToolTip("Filter the frame list by annotation status")
         self._filter_combo.currentIndexChanged.connect(self._on_filter_changed)
@@ -2611,6 +2686,14 @@ class LabelEditorWindow(QMainWindow):
                 f for f in self._all_frame_files
                 if self._frame_meta(os.path.splitext(f)[0]).get("verified_by")
             ]
+        elif mode == "With pending reviews":
+            def _has_pending(fid):
+                rev = self._frame_meta(fid).get("review") or {}
+                return any(not it.get("resolved") for it in rev.get("items", []))
+            visible = [
+                f for f in self._all_frame_files
+                if _has_pending(os.path.splitext(f)[0])
+            ]
         else:
             visible = self._all_frame_files
 
@@ -2641,11 +2724,16 @@ class LabelEditorWindow(QMainWindow):
                 annotator_col = "auto"
 
             # Icon column
+            review = meta.get("review") or {}
+            has_pending_review = any(
+                not it.get("resolved") for it in review.get("items", []))
             icon_col = ""
             if verified_by:
                 icon_col += "✓"
             if flagged:
                 icon_col += "🚩"
+            if has_pending_review:
+                icon_col += "📝"
 
             item = QTreeWidgetItem([f, annotator_col, icon_col])
             item.setData(0, Qt.UserRole, f)
@@ -2653,11 +2741,13 @@ class LabelEditorWindow(QMainWindow):
             item.setCheckState(0, Qt.Unchecked)
 
             if flagged:
-                color = QColor("#e05252")   # red   – flagged
+                color = QColor("#e05252")   # red    – flagged
+            elif has_pending_review:
+                color = QColor("#e0a030")   # orange – pending review
             elif verified_by:
-                color = QColor("#4ec94e")   # green – verified
+                color = QColor("#4ec94e")   # green  – verified
             elif manually_modified:
-                color = QColor("#d4d4d4")   # white – manually annotated
+                color = QColor("#d4d4d4")   # white  – manually annotated
             elif has_ann:
                 color = QColor("#9cdcfe")   # blue  – auto/pseudo
             else:
@@ -2739,6 +2829,7 @@ class LabelEditorWindow(QMainWindow):
                     if dlg.exec_() == QDialog.Accepted:
                         review["items"] = dlg.items
                         self._save_review(frame_id, review)
+                        self._update_file_list_row(frame_id)
         elif self.labels_dir:
             label_path = os.path.join(self.labels_dir, f"{frame_id}.json")
             if os.path.exists(label_path):
@@ -3914,21 +4005,97 @@ class LabelEditorWindow(QMainWindow):
         self._save_review(frame_id, review)
         self._update_status(
             f"Review saved: ID [{object_index}] {review_type} — frame {frame_id}")
+        # Refresh the frame list icon immediately so 📝 appears
+        if self._filter_combo.currentIndex() != 0:
+            self._apply_file_filter()
+        else:
+            self._update_file_list_row(frame_id)
 
     def _on_add_review(self):
-        """Show all current review items for this frame; admin can see/manage them."""
+        """Open the review panel for the current frame.
+
+        Admin: sees existing items (read-only) plus a button to add a general
+        frame-level comment (missing objects, missing masks, etc.).
+        """
         if self.current_frame_id is None:
             QMessageBox.information(self, "No frame", "Load a frame first.")
             return
-        meta = self._frame_meta(self.current_frame_id)
+        meta   = self._frame_meta(self.current_frame_id)
         review = meta.get("review") or {}
-        if not review.get("items"):
-            QMessageBox.information(self, "No review items",
-                "No review items yet.\n\nRight-click an object in the list or the "
-                "image to add a review for its 3D BB or mask.")
-            return
-        dlg = _ReviewChecklistDialog(review, read_only=True, parent=self)
+        items  = review.get("items", [])
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("📝 Frame review")
+        dlg.setModal(True)
+        dlg.setMinimumWidth(600)
+        dlg.setMinimumHeight(360)
         dlg.setStyleSheet(self.styleSheet())
+        vbox = QVBoxLayout(dlg)
+        vbox.setSpacing(10)
+        vbox.setContentsMargins(14, 14, 14, 14)
+
+        if items:
+            checklist = _ReviewChecklistDialog(review, read_only=True, parent=dlg)
+            checklist.setWindowFlags(Qt.Widget)
+            checklist.setModal(False)
+            # Embed the checklist widget's layout directly
+            inner_scroll = checklist.findChild(QScrollArea)
+            reviewer_lbl = checklist.findChild(QLabel)
+            if reviewer_lbl:
+                vbox.addWidget(reviewer_lbl)
+            if inner_scroll:
+                vbox.addWidget(inner_scroll, stretch=1)
+        else:
+            lbl = QLabel(
+                "<i>No review items yet.<br>"
+                "Right-click an object in the list or the image to review its "
+                "3D BB or mask.</i>"
+            )
+            lbl.setStyleSheet("color:#888; font-size:12px;")
+            lbl.setAlignment(Qt.AlignCenter)
+            vbox.addWidget(lbl, stretch=1)
+
+        sep = QFrame(); sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("color:#444;")
+        vbox.addWidget(sep)
+
+        add_gen_btn = QPushButton("+ Add general comment  (missing objects / masks…)")
+        add_gen_btn.setStyleSheet(
+            "QPushButton{background:#1a3a5c; color:#9cdcfe; border-radius:4px;"
+            "padding:6px 12px; font-size:12px;}"
+            "QPushButton:hover{background:#1f4a7a;}"
+        )
+        vbox.addWidget(add_gen_btn)
+
+        close_btn = QDialogButtonBox(QDialogButtonBox.Close)
+        close_btn.rejected.connect(dlg.reject)
+        vbox.addWidget(close_btn)
+
+        def _add_general():
+            from PyQt5.QtWidgets import QInputDialog as QID
+            comment, ok = QID.getMultiLineText(
+                dlg, "📝 General review",
+                "Comment (missing objects, missing masks, general issues):", "")
+            if not ok or not comment.strip():
+                return
+            rev = self._get_or_init_review(self.current_frame_id)
+            rev["items"].append({
+                "object_index":    None,
+                "type":            "General",
+                "comment":         comment.strip(),
+                "resolved":        False,
+                "resolve_comment": "",
+            })
+            self._save_review(self.current_frame_id, rev)
+            self._update_status(f"General review comment added — frame {self.current_frame_id}")
+            dlg.accept()
+            # Refresh frame list icon
+            if self._filter_combo.currentIndex() != 0:
+                self._apply_file_filter()
+            else:
+                self._update_file_list_row(self.current_frame_id)
+
+        add_gen_btn.clicked.connect(_add_general)
         dlg.exec_()
 
     def _on_remove_frame(self):
@@ -4601,14 +4768,21 @@ class LabelEditorWindow(QMainWindow):
                 else:
                     annotator_col = "auto"
 
+                review = meta.get("review") or {}
+                has_pending_review = any(
+                    not it.get("resolved") for it in review.get("items", []))
                 icon_col = ""
                 if verified_by:
                     icon_col += "✓"
                 if flagged:
                     icon_col += "🚩"
+                if has_pending_review:
+                    icon_col += "📝"
 
                 if flagged:
                     color = QColor("#e05252")
+                elif has_pending_review:
+                    color = QColor("#e0a030")
                 elif verified_by:
                     color = QColor("#4ec94e")
                 elif manually_modified:
