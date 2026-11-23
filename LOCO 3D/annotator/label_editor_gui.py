@@ -2830,7 +2830,7 @@ class LabelEditorWindow(QMainWindow):
                     if dlg.exec_() == QDialog.Accepted:
                         review["items"] = dlg.items
                         self._save_review(frame_id, review)
-                        self._update_file_list_row(frame_id)
+                        self._refresh_file_list_item(frame_id)
         elif self.labels_dir:
             label_path = os.path.join(self.labels_dir, f"{frame_id}.json")
             if os.path.exists(label_path):
@@ -4010,7 +4010,7 @@ class LabelEditorWindow(QMainWindow):
         if self._filter_combo.currentIndex() != 0:
             self._apply_file_filter()
         else:
-            self._update_file_list_row(frame_id)
+            self._refresh_file_list_item(frame_id)
 
     def _on_add_review(self):
         """Open the review panel for the current frame.
@@ -4094,7 +4094,7 @@ class LabelEditorWindow(QMainWindow):
             if self._filter_combo.currentIndex() != 0:
                 self._apply_file_filter()
             else:
-                self._update_file_list_row(self.current_frame_id)
+                self._refresh_file_list_item(self.current_frame_id)
 
         add_gen_btn.clicked.connect(_add_general)
         dlg.exec_()
