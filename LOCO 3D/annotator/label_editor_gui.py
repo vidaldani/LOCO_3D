@@ -2308,6 +2308,10 @@ class LabelEditorWindow(QMainWindow):
         if self.file_list.topLevelItemCount() > 0:
             self.file_list.setCurrentItem(self.file_list.topLevelItem(0))
 
+        # Show pending-review summary to annotators on login
+        if (self._current_user or {}).get("role") == "annotator":
+            self._show_pending_review_summary()
+
     # ------------------------------------------------------------------
     # ------------------------------------------------------------------
     # COCO per-frame helpers
@@ -3953,6 +3957,74 @@ class LabelEditorWindow(QMainWindow):
         self._patch_frame_json(self.current_frame_id, updates)
         self._update_status(f"Frame {self.current_frame_id} flagged.")
         self._apply_file_filter()
+
+    def _show_pending_review_summary(self):
+        """Show a summary dialog of open review comments for the logged-in annotator."""
+        my_name = (self._current_user or {}).get("username", "")
+        pending: list[tuple[str, int]] = []  # (frame_id, open_count)
+        for f in self._all_frame_files:
+            frame_id = os.path.splitext(f)[0]
+            meta = self._frame_meta(frame_id)
+            review = meta.get("review") or {}
+            if not review.get("items"):
+                continue
+            # Include reviews addressed to me or with no specific target
+            addressed_to_me = (review.get("for") == my_name or not review.get("for"))
+            if not addressed_to_me:
+                continue
+            open_count = sum(1 for it in review["items"] if not it.get("resolved"))
+            if open_count > 0:
+                pending.append((frame_id, open_count))
+
+        if not pending:
+            return  # nothing to show
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("📝 Pending reviews")
+        dlg.setModal(True)
+        dlg.setMinimumWidth(380)
+        dlg.setStyleSheet(self.styleSheet())
+        vbox = QVBoxLayout(dlg)
+        vbox.setSpacing(10)
+        vbox.setContentsMargins(16, 16, 16, 16)
+
+        total = sum(c for _, c in pending)
+        hdr = QLabel(
+            f"Your instructor left <b>{total} open comment{'s' if total != 1 else ''}</b> "
+            f"across <b>{len(pending)} frame{'s' if len(pending) != 1 else ''}</b>."
+        )
+        hdr.setWordWrap(True)
+        hdr.setStyleSheet("font-size:13px; padding-bottom:4px;")
+        vbox.addWidget(hdr)
+
+        tree = QTreeWidget()
+        tree.setHeaderLabels(["Frame", "Open comments"])
+        tree.setRootIsDecorated(False)
+        tree.header().setStretchLastSection(False)
+        tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        tree.setStyleSheet(
+            "QTreeWidget{border:1px solid #444; border-radius:4px;}"
+            "QTreeWidget::item{padding:4px 6px;}"
+        )
+        for frame_id, count in pending:
+            item = QTreeWidgetItem([frame_id, str(count)])
+            item.setTextAlignment(1, Qt.AlignCenter)
+            item.setForeground(1, QColor("#e0a030"))
+            tree.addTopLevelItem(item)
+
+        tree.setFixedHeight(min(len(pending) * 28 + 28, 260))
+        vbox.addWidget(tree)
+
+        hint = QLabel("<i>Open each frame to review and check off the items.</i>")
+        hint.setStyleSheet("color:#888; font-size:11px;")
+        vbox.addWidget(hint)
+
+        btn = QDialogButtonBox(QDialogButtonBox.Ok)
+        btn.accepted.connect(dlg.accept)
+        vbox.addWidget(btn)
+
+        dlg.exec_()
 
     def _get_or_init_review(self, frame_id: str) -> dict:
         """Return the review dict for frame_id, creating it if absent."""
