@@ -908,6 +908,42 @@ class _FlagCommentDialog(QDialog):
         self.accept()
 
 
+class _ReviewDialog(QDialog):
+    """Shown to a student when the instructor has left a review on a frame."""
+
+    def __init__(self, review: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("📝 Instructor review")
+        self.setModal(True)
+        self.setMinimumWidth(460)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(14, 14, 14, 14)
+
+        reviewer = review.get("reviewer", "instructor")
+        reviewed_at = review.get("reviewed_at", "")
+        info = QLabel(f"<b>Review from:</b> {reviewer}   <b>at:</b> {reviewed_at}")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        comment_box = QLabel(review.get("comment", "(no comment)"))
+        comment_box.setWordWrap(True)
+        comment_box.setStyleSheet(
+            "background:#1e2d1e; color:#e0e0e0; padding:10px;"
+            "border-radius:4px; font-size:13px; border: 1px solid #4caf50;"
+        )
+        layout.addWidget(comment_box)
+
+        note = QLabel("<i>Correct the annotation, then save and push.</i>")
+        note.setStyleSheet("color:#888; font-size:11px;")
+        layout.addWidget(note)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok)
+        btns.accepted.connect(self.accept)
+        layout.addWidget(btns)
+
+
 class _BootstrapAdminDialog(QDialog):
     """Shown when a project has no admin yet.
     Lets the user pick a previously used admin or create a new one."""
@@ -1863,6 +1899,13 @@ class LabelEditorWindow(QMainWindow):
         self._flag_btn.setEnabled(False)
         self._flag_btn.clicked.connect(self._on_flag_frame)
         bottom_btn_row.addWidget(self._flag_btn)
+
+        self._review_btn = QPushButton("📝 Review")
+        self._review_btn.setToolTip("Leave a review for the annotator of this frame (admin only)")
+        self._review_btn.setEnabled(False)
+        self._review_btn.setVisible(False)
+        self._review_btn.clicked.connect(self._on_add_review)
+        bottom_btn_row.addWidget(self._review_btn)
         layout.addLayout(bottom_btn_row)
 
         self._remove_frame_btn = QPushButton("🗑 Remove frame")
@@ -2081,6 +2124,7 @@ class LabelEditorWindow(QMainWindow):
                 self._user_label.setText(f"Signed in: {name} ({role})")
                 self._verify_btn.setEnabled(role == "admin")
                 self._remove_frame_btn.setEnabled(role == "admin")
+                self._review_btn.setVisible(role == "admin")
                 self._cfg.setdefault("last_users", {})[root] = name
                 save_config(self._cfg)
 
@@ -2390,6 +2434,25 @@ class LabelEditorWindow(QMainWindow):
         status.setdefault(frame_id, {}).update(updates)
         _save_project_file(self._dataset_root, data)
 
+    def _patch_frame_json(self, frame_id: str, fields: dict):
+        """Merge top-level fields into the per-frame COCO JSON file and update cache."""
+        if not self._annotations_dir:
+            return
+        path = os.path.join(self._annotations_dir, f"{frame_id}.json")
+        if not os.path.isfile(path):
+            return
+        try:
+            with open(path) as f:
+                doc = json.load(f)
+            if isinstance(doc, list):
+                return
+            doc.update(fields)
+            with open(path, "w") as f:
+                json.dump(doc, f, indent=2)
+            self._coco_frame_cache[frame_id] = doc
+        except Exception:
+            pass
+
     # ------------------------------------------------------------------
     # Slots
     # ------------------------------------------------------------------
@@ -2430,25 +2493,40 @@ class LabelEditorWindow(QMainWindow):
         data = _load_project_file(self._dataset_root)
         meta = dict((data or {}).get("frame_status", {}).get(frame_id, {}))
 
-        # Backfill from annotation JSON when local metadata doesn't have both
-        # manually_modified=True and annotated_by.  A frame that was only viewed
-        # (not saved) gets annotated_by written locally without manually_modified,
-        # so we must look at the JSON to get the real annotator.
-        if not (meta.get("manually_modified") and meta.get("annotated_by")) and self._annotations_dir:
+        # Backfill from annotation JSON — that file travels with git, so it has
+        # the authoritative annotated_by, flag, and review data for all users.
+        if self._annotations_dir:
             doc = self._load_frame_doc(frame_id)
-            if doc and doc.get("annotated_by"):
-                meta["annotated_by"] = doc["annotated_by"]
-                if doc.get("annotated_at"):
-                    meta["annotated_at"] = doc["annotated_at"]
-                # Treat presence of annotated_by in the JSON as evidence the frame
-                # was manually annotated, so the display condition is satisfied.
-                meta.setdefault("manually_modified", True)
-                # Persist to local project file so future calls are fast.
-                self._update_frame_meta(frame_id, {
-                    "annotated_by":      meta["annotated_by"],
-                    "annotated_at":      meta.get("annotated_at", ""),
-                    "manually_modified": True,
-                })
+            if doc:
+                # annotated_by: backfill when local meta doesn't have a confirmed value
+                if not (meta.get("manually_modified") and meta.get("annotated_by")):
+                    if doc.get("annotated_by"):
+                        meta["annotated_by"] = doc["annotated_by"]
+                        if doc.get("annotated_at"):
+                            meta["annotated_at"] = doc["annotated_at"]
+                        meta.setdefault("manually_modified", True)
+                        self._update_frame_meta(frame_id, {
+                            "annotated_by":      meta["annotated_by"],
+                            "annotated_at":      meta.get("annotated_at", ""),
+                            "manually_modified": True,
+                        })
+
+                # flag: always read from JSON (source of truth across machines)
+                if doc.get("flagged") and not meta.get("flagged"):
+                    meta["flagged"]       = doc["flagged"]
+                    meta["flag_comment"]  = doc.get("flag_comment", "")
+                    meta["flagged_by"]    = doc.get("flagged_by", "")
+                    meta["flagged_at"]    = doc.get("flagged_at", "")
+                    self._update_frame_meta(frame_id, {
+                        "flagged":      True,
+                        "flag_comment": meta["flag_comment"],
+                        "flagged_by":   meta["flagged_by"],
+                        "flagged_at":   meta["flagged_at"],
+                    })
+
+                # review: propagate from JSON to local meta
+                if doc.get("review") and not meta.get("review"):
+                    meta["review"] = doc["review"]
 
         return meta
 
@@ -2561,6 +2639,7 @@ class LabelEditorWindow(QMainWindow):
         self._load_frame(os.path.splitext(self._item_fname(item))[0])
         self._auto_btn.setEnabled(True)
         self._flag_btn.setEnabled(True)
+        self._review_btn.setEnabled(True)
 
     def _load_frame(self, frame_id: str):
         self._3d_bb_manually_touched = False
@@ -2590,6 +2669,22 @@ class LabelEditorWindow(QMainWindow):
             self._ensure_seg_txt_from_coco(frame_id)
             if not anns:
                 self._update_status(f"{frame_id} — no COCO annotations yet")
+
+            # Show review notification when an annotator opens a frame reviewed for them
+            meta = self._frame_meta(frame_id)
+            review = meta.get("review")
+            if review:
+                my_name = (self._current_user or {}).get("username", "")
+                seen_key = f"review_seen_{frame_id}"
+                already_seen = (self._cfg or {}).get(seen_key)
+                is_for_me = review.get("for") == my_name or not review.get("for")
+                is_admin = (self._current_user or {}).get("role") == "admin"
+                if is_for_me and not is_admin and not already_seen:
+                    dlg = _ReviewDialog(review, parent=self)
+                    dlg.setStyleSheet(self.styleSheet())
+                    dlg.exec_()
+                    self._cfg[seen_key] = True
+                    save_config(self._cfg)
         elif self.labels_dir:
             label_path = os.path.join(self.labels_dir, f"{frame_id}.json")
             if os.path.exists(label_path):
@@ -3683,20 +3778,62 @@ class LabelEditorWindow(QMainWindow):
         prompt = ("Update flag comment:" if already
                   else "Describe the issue with this frame:")
         from PyQt5.QtWidgets import QInputDialog
-        comment, ok = QInputDialog.getMultiLineText(self, "🚩 Flag frame", prompt,
-                                                    self._frame_meta(self.current_frame_id)
-                                                        .get("flag_comment", "") if already else "")
-        if not ok:
-            return
+        while True:
+            comment, ok = QInputDialog.getMultiLineText(
+                self, "🚩 Flag frame", prompt,
+                self._frame_meta(self.current_frame_id).get("flag_comment", "") if already else "")
+            if not ok:
+                return
+            if comment.strip():
+                break
+            QMessageBox.warning(self, "Description required",
+                                "Please enter a description of the issue before flagging.")
         updates = {
-            "flagged": True,
+            "flagged":      True,
             "flag_comment": comment.strip(),
-            "flagged_at": datetime.datetime.now().isoformat(timespec="seconds"),
-            "flagged_by": self._current_user["username"] if self._current_user else "unknown",
+            "flagged_at":   datetime.datetime.now().isoformat(timespec="seconds"),
+            "flagged_by":   self._current_user["username"] if self._current_user else "unknown",
         }
         self._update_frame_meta(self.current_frame_id, updates)
+        self._patch_frame_json(self.current_frame_id, updates)
         self._update_status(f"Frame {self.current_frame_id} flagged.")
         self._apply_file_filter()
+
+    def _on_add_review(self):
+        """Admin writes a review for the annotator of the current frame."""
+        if self.current_frame_id is None:
+            QMessageBox.information(self, "No frame", "Load a frame first.")
+            return
+        if not self._annotations_dir:
+            QMessageBox.warning(self, "No project", "No annotation directory found.")
+            return
+        meta = self._frame_meta(self.current_frame_id)
+        annotator = meta.get("annotated_by", "")
+        if not annotator:
+            QMessageBox.information(self, "No annotator",
+                "This frame has no annotator recorded — save it first.")
+            return
+        from PyQt5.QtWidgets import QInputDialog
+        existing = (meta.get("review") or {}).get("comment", "")
+        prompt = f"Review for {annotator} on frame {self.current_frame_id}:"
+        while True:
+            comment, ok = QInputDialog.getMultiLineText(
+                self, "📝 Add review", prompt, existing)
+            if not ok:
+                return
+            if comment.strip():
+                break
+            QMessageBox.warning(self, "Comment required",
+                                "Please enter a review comment.")
+        review = {
+            "reviewer":    self._current_user["username"] if self._current_user else "admin",
+            "reviewed_at": datetime.datetime.now().isoformat(timespec="seconds"),
+            "comment":     comment.strip(),
+            "for":         annotator,
+        }
+        self._patch_frame_json(self.current_frame_id, {"review": review})
+        self._update_frame_meta(self.current_frame_id, {"review": review})
+        self._update_status(f"Review saved for frame {self.current_frame_id} → {annotator}.")
 
     def _on_remove_frame(self):
         if self.current_frame_id is None:
@@ -3787,12 +3924,12 @@ class LabelEditorWindow(QMainWindow):
         dlg.setStyleSheet(self.styleSheet())
         dlg.exec_()
         if dlg.resolved:
-            # Remove flag from meta
             updates = {"flagged": False, "flag_comment": "", "flagged_by": "",
                        "flagged_at": "", "resolved_by": self._current_user["username"]
                        if self._current_user else "unknown",
                        "resolved_at": datetime.datetime.now().isoformat(timespec="seconds")}
             self._update_frame_meta(frame_id, updates)
+            self._patch_frame_json(frame_id, updates)
             self._update_status(f"Flag resolved on {frame_id}.")
             self._apply_file_filter()
 
