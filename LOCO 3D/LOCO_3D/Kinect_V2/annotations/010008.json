@@ -321,12 +321,26 @@
   "annotated_at": "2026-11-12T09:45:41",
   "review": {
     "reviewer": "dan.vidal",
-    "reviewed_at": "2026-11-23T14:43:21",
+    "reviewed_at": "2026-11-23T15:01:27",
     "items": [
       {
         "object_index": 1,
         "type": "Mask",
         "comment": "The mask of the pallet truck is wrong, it partially overlaps with the stillage above",
+        "resolved": false,
+        "resolve_comment": ""
+      },
+      {
+        "object_index": null,
+        "type": "General",
+        "comment": "The two Stillage boxes on top of the pallet truck are unlabeled",
+        "resolved": false,
+        "resolve_comment": ""
+      },
+      {
+        "object_index": 0,
+        "type": "Mask",
+        "comment": "The mask is wrong, it includes parts of the box bellow",
         "resolved": false,
         "resolve_comment": ""
       }
