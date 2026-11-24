@@ -3777,18 +3777,20 @@ class LabelEditorWindow(QMainWindow):
         selective = all("_mask_index" in o for o in new_objs)
 
         if selective:
-            # Merge: update only the objects at the given indices
+            # Merge: update existing objects at their index; append new ones
             merged = list(self.current_objects)  # shallow copy — entries replaced below
             for new_obj in new_objs:
                 idx = new_obj.pop("_mask_index")
                 if idx >= len(merged):
+                    # New mask added in the editor — append as a new object
+                    merged.append(new_obj)
                     continue
                 old = merged[idx]
                 # Overwrite only the 3D-BB fields; keep name, bbox_2d, etc.
                 for field in ("centroid", "dimensions", "rotations", "no_3d_bb"):
                     if field in new_obj:
                         old[field] = new_obj[field]
-                    elif field in old and field == "no_3d_bb":
+                    elif field == "no_3d_bb":
                         old.pop("no_3d_bb", None)
             objs_to_save = merged
             n_updated = len(new_objs)

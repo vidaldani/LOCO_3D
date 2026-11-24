@@ -637,7 +637,21 @@ class MaskEditDialog(QDialog):
         rl.setSpacing(6)
         rl.setContentsMargins(6, 6, 6, 6)
 
-        rl.addWidget(QLabel("Masks:"))
+        masks_hdr = QHBoxLayout()
+        masks_hdr.addWidget(QLabel("Masks (check → regen 3D BB):"))
+        masks_hdr.addStretch()
+        self._sel_all_btn = QPushButton("All")
+        self._sel_all_btn.setFixedWidth(32)
+        self._sel_all_btn.setToolTip("Select all masks")
+        self._sel_all_btn.clicked.connect(self._select_all_masks)
+        self._sel_none_btn = QPushButton("∅")
+        self._sel_none_btn.setFixedWidth(28)
+        self._sel_none_btn.setToolTip("Deselect all masks")
+        self._sel_none_btn.clicked.connect(self._deselect_all_masks)
+        masks_hdr.addWidget(self._sel_all_btn)
+        masks_hdr.addWidget(self._sel_none_btn)
+        rl.addLayout(masks_hdr)
+
         self._list = QListWidget()
         self._list.currentRowChanged.connect(self._on_mask_selected)
         self._list.installEventFilter(self)
@@ -717,9 +731,17 @@ class MaskEditDialog(QDialog):
             name = self._classes[cid] if cid < len(self._classes) else f"class_{cid}"
             item = QListWidgetItem(f"[{i}]  {name}")
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Checked)
+            item.setCheckState(Qt.Unchecked)
             self._list.addItem(item)
         self._list.blockSignals(False)
+
+    def _select_all_masks(self):
+        for i in range(self._list.count()):
+            self._list.item(i).setCheckState(Qt.Checked)
+
+    def _deselect_all_masks(self):
+        for i in range(self._list.count()):
+            self._list.item(i).setCheckState(Qt.Unchecked)
 
     def _on_mask_selected(self, row: int):
         self._scene.set_active_mask(self._masks[row] if row >= 0 else None)
