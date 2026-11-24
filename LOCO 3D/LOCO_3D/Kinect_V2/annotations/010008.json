@@ -443,5 +443,11 @@
     }
   ],
   "annotated_by": "dan.vidal",
-  "annotated_at": "2026-11-24T12:07:51"
+  "annotated_at": "2026-11-24T12:07:51",
+  "review": {
+    "reviewer": "dan.vidal",
+    "reviewed_at": "2026-11-24T12:31:24",
+    "items": [],
+    "for": "bo.shi"
+  }
 }
