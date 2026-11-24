@@ -3786,8 +3786,9 @@ class LabelEditorWindow(QMainWindow):
                     merged.append(new_obj)
                     continue
                 old = merged[idx]
-                # Overwrite only the 3D-BB fields; keep name, bbox_2d, etc.
-                for field in ("centroid", "dimensions", "rotations", "no_3d_bb"):
+                # Overwrite 3D-BB fields and bbox_2d (needed so _save_to_coco can
+                # re-match the updated polygon via IoU after a mask edit)
+                for field in ("centroid", "dimensions", "rotations", "no_3d_bb", "bbox_2d"):
                     if field in new_obj:
                         old[field] = new_obj[field]
                     elif field == "no_3d_bb":
