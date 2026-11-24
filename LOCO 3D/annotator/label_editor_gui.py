@@ -1854,7 +1854,7 @@ class LabelEditorWindow(QMainWindow):
         self._current_user: dict | None = None   # {"username": str, "role": "admin"|"annotator"}
         self._3d_bb_manually_touched = False     # True when user edits spinboxes manually
         self._block_manual_tracking = False      # True during programmatic field updates
-        self._copied_pose: dict | None = None    # {"x": float, "z": float, "yaw": float}
+        self._clipboard: dict | None = None  # {"type": "pose"|"dims"|"pose_dims", ...}
         # COCO per-frame format support
         self._coco_db:            dict | None = None   # {"categories": [...]} when COCO mode active
         self._annotations_dir:    str  | None = None   # path to annotations/ directory
@@ -2872,7 +2872,7 @@ class LabelEditorWindow(QMainWindow):
         self._refresh_image_pixmap()
 
     def _on_obj_list_context_menu(self, pos):
-        """Right-click menu on the object list: Copy / Paste pose (X, Z, Yaw)."""
+        """Right-click menu on the object list: Copy/Paste pose and/or dimensions."""
         from PyQt5.QtWidgets import QMenu
         item = self.object_list.itemAt(pos)
         if item is None:
@@ -2881,17 +2881,16 @@ class LabelEditorWindow(QMainWindow):
         if row < 0 or row >= len(self.current_objects):
             return
 
-        # Make sure the active widget values are synced before reading
         self._sync_active()
         obj = self.current_objects[row]
-        cen  = obj.get("centroid",  {})
-        rots = obj.get("rotations", {})
 
         is_admin = (self._current_user or {}).get("role") == "admin"
         menu = QMenu(self)
-        copy_act  = menu.addAction("Copy pose (X, Z, Yaw)")
-        paste_act = menu.addAction("Paste pose (X, Z, Yaw)")
-        paste_act.setEnabled(self._copied_pose is not None)
+        copy_pose_act      = menu.addAction("Copy pose (X, Z, Yaw)")
+        copy_dims_act      = menu.addAction("Copy dimensions")
+        copy_pose_dims_act = menu.addAction("Copy pose and dimensions")
+        paste_act          = menu.addAction("Paste")
+        paste_act.setEnabled(self._clipboard is not None)
         review_bb_act = None
         if is_admin and self.current_frame_id:
             menu.addSeparator()
@@ -2905,23 +2904,52 @@ class LabelEditorWindow(QMainWindow):
             self._add_review_item(self.current_frame_id, row, "3D BB")
             return
 
-        if action is copy_act:
-            self._copied_pose = {
-                "x":   cen.get("x",  0.0),
-                "z":   cen.get("z",  0.0),
+        if action is copy_pose_act:
+            cen  = obj.get("centroid",  {})
+            rots = obj.get("rotations", {})
+            self._clipboard = {
+                "type": "pose",
+                "x": cen.get("x", 0.0), "z": cen.get("z", 0.0),
                 "yaw": rots.get("y", 0.0),
             }
             self._update_status(
                 f"Copied pose from [{row}] {obj.get('name','')}: "
-                f"X={self._copied_pose['x']:.3f}, Z={self._copied_pose['z']:.3f}, "
-                f"Yaw={self._copied_pose['yaw']:.1f}°"
+                f"X={self._clipboard['x']:.3f}, Z={self._clipboard['z']:.3f}, "
+                f"Yaw={self._clipboard['yaw']:.1f}°"
             )
 
-        elif action is paste_act and self._copied_pose is not None:
-            obj["centroid"]["x"]  = self._copied_pose["x"]
-            obj["centroid"]["z"]  = self._copied_pose["z"]
-            obj["rotations"]["y"] = self._copied_pose["yaw"]
-            # Select that object so the field widget refreshes
+        elif action is copy_dims_act:
+            dims = obj.get("dimensions", {})
+            self._clipboard = {
+                "type": "dims",
+                "length": dims.get("length", 0.0),
+                "width":  dims.get("width",  0.0),
+                "height": dims.get("height", 0.0),
+            }
+            self._update_status(
+                f"Copied dimensions from [{row}] {obj.get('name','')}: "
+                f"L={self._clipboard['length']:.3f}, W={self._clipboard['width']:.3f}, "
+                f"H={self._clipboard['height']:.3f}"
+            )
+
+        elif action is copy_pose_dims_act:
+            cen  = obj.get("centroid",  {})
+            rots = obj.get("rotations", {})
+            dims = obj.get("dimensions", {})
+            self._clipboard = {
+                "type": "pose_dims",
+                "x": cen.get("x", 0.0), "z": cen.get("z", 0.0),
+                "yaw": rots.get("y", 0.0),
+                "length": dims.get("length", 0.0),
+                "width":  dims.get("width",  0.0),
+                "height": dims.get("height", 0.0),
+            }
+            self._update_status(
+                f"Copied pose+dims from [{row}] {obj.get('name','')}"
+            )
+
+        elif action is paste_act and self._clipboard is not None:
+            self._apply_clipboard(row, obj)
             self.object_list.setCurrentRow(row)
             self._clear_active_widget()
             widget = ObjectFieldWidget(row, obj, on_change=self._on_regenerate)
@@ -2931,11 +2959,22 @@ class LabelEditorWindow(QMainWindow):
             self._3d_bb_manually_touched = True
             self._dirty = True
             self._render_scene()
-            self._update_status(
-                f"Pasted pose to [{row}] {obj.get('name','')}: "
-                f"X={self._copied_pose['x']:.3f}, Z={self._copied_pose['z']:.3f}, "
-                f"Yaw={self._copied_pose['yaw']:.1f}°"
-            )
+            self._update_status(f"Pasted to [{row}] {obj.get('name','')}")
+
+    def _apply_clipboard(self, row: int, obj: dict):
+        """Apply self._clipboard (pose, dims, or both) to obj in-place."""
+        cb = self._clipboard
+        if cb is None:
+            return
+        ctype = cb.get("type", "")
+        if ctype in ("pose", "pose_dims"):
+            obj.setdefault("centroid",  {})["x"] = cb["x"]
+            obj.setdefault("centroid",  {})["z"] = cb["z"]
+            obj.setdefault("rotations", {})["y"] = cb["yaw"]
+        if ctype in ("dims", "pose_dims"):
+            obj.setdefault("dimensions", {})["length"] = cb["length"]
+            obj.setdefault("dimensions", {})["width"]  = cb["width"]
+            obj.setdefault("dimensions", {})["height"] = cb["height"]
 
     def _on_regenerate(self):
         if self.current_frame_id is None:
@@ -4650,13 +4689,12 @@ class LabelEditorWindow(QMainWindow):
                 item.setCheckState(new_state)
 
     def _on_image_right_click(self, pos):
-        """Right-click on the RGB preview: select the mask under the cursor, then show Copy/Paste pose menu."""
+        """Right-click on the RGB preview: select the mask under the cursor, then show Copy/Paste menu."""
         from PyQt5.QtWidgets import QMenu
         if (self._orig_pixmap is None or self._orig_pixmap.isNull()
                 or not self.current_frame_id):
             return
 
-        # Select the object under the cursor (reuse left-click logic)
         self._on_image_clicked(pos)
 
         row = self.object_list.currentRow()
@@ -4665,14 +4703,14 @@ class LabelEditorWindow(QMainWindow):
 
         self._sync_active()
         obj = self.current_objects[row]
-        cen  = obj.get("centroid",  {})
-        rots = obj.get("rotations", {})
 
         is_admin = (self._current_user or {}).get("role") == "admin"
         menu = QMenu(self)
-        copy_act  = menu.addAction("Copy pose (X, Z, Yaw)")
-        paste_act = menu.addAction("Paste pose (X, Z, Yaw)")
-        paste_act.setEnabled(self._copied_pose is not None)
+        copy_pose_act      = menu.addAction("Copy pose (X, Z, Yaw)")
+        copy_dims_act      = menu.addAction("Copy dimensions")
+        copy_pose_dims_act = menu.addAction("Copy pose and dimensions")
+        paste_act          = menu.addAction("Paste")
+        paste_act.setEnabled(self._clipboard is not None)
         review_mask_act = None
         if is_admin and self.current_frame_id:
             menu.addSeparator()
@@ -4686,22 +4724,52 @@ class LabelEditorWindow(QMainWindow):
             self._add_review_item(self.current_frame_id, row, "Mask")
             return
 
-        if action is copy_act:
-            self._copied_pose = {
-                "x":   cen.get("x",  0.0),
-                "z":   cen.get("z",  0.0),
+        if action is copy_pose_act:
+            cen  = obj.get("centroid",  {})
+            rots = obj.get("rotations", {})
+            self._clipboard = {
+                "type": "pose",
+                "x": cen.get("x", 0.0), "z": cen.get("z", 0.0),
                 "yaw": rots.get("y", 0.0),
             }
             self._update_status(
                 f"Copied pose from [{row}] {obj.get('name','')}: "
-                f"X={self._copied_pose['x']:.3f}, Z={self._copied_pose['z']:.3f}, "
-                f"Yaw={self._copied_pose['yaw']:.1f}°"
+                f"X={self._clipboard['x']:.3f}, Z={self._clipboard['z']:.3f}, "
+                f"Yaw={self._clipboard['yaw']:.1f}°"
             )
 
-        elif action is paste_act and self._copied_pose is not None:
-            obj["centroid"]["x"]  = self._copied_pose["x"]
-            obj["centroid"]["z"]  = self._copied_pose["z"]
-            obj["rotations"]["y"] = self._copied_pose["yaw"]
+        elif action is copy_dims_act:
+            dims = obj.get("dimensions", {})
+            self._clipboard = {
+                "type": "dims",
+                "length": dims.get("length", 0.0),
+                "width":  dims.get("width",  0.0),
+                "height": dims.get("height", 0.0),
+            }
+            self._update_status(
+                f"Copied dimensions from [{row}] {obj.get('name','')}: "
+                f"L={self._clipboard['length']:.3f}, W={self._clipboard['width']:.3f}, "
+                f"H={self._clipboard['height']:.3f}"
+            )
+
+        elif action is copy_pose_dims_act:
+            cen  = obj.get("centroid",  {})
+            rots = obj.get("rotations", {})
+            dims = obj.get("dimensions", {})
+            self._clipboard = {
+                "type": "pose_dims",
+                "x": cen.get("x", 0.0), "z": cen.get("z", 0.0),
+                "yaw": rots.get("y", 0.0),
+                "length": dims.get("length", 0.0),
+                "width":  dims.get("width",  0.0),
+                "height": dims.get("height", 0.0),
+            }
+            self._update_status(
+                f"Copied pose+dims from [{row}] {obj.get('name','')}"
+            )
+
+        elif action is paste_act and self._clipboard is not None:
+            self._apply_clipboard(row, obj)
             self.object_list.setCurrentRow(row)
             self._clear_active_widget()
             widget = ObjectFieldWidget(row, obj, on_change=self._on_regenerate)
@@ -4711,11 +4779,7 @@ class LabelEditorWindow(QMainWindow):
             self._3d_bb_manually_touched = True
             self._dirty = True
             self._render_scene()
-            self._update_status(
-                f"Pasted pose to [{row}] {obj.get('name','')}: "
-                f"X={self._copied_pose['x']:.3f}, Z={self._copied_pose['z']:.3f}, "
-                f"Yaw={self._copied_pose['yaw']:.1f}°"
-            )
+            self._update_status(f"Pasted to [{row}] {obj.get('name','')}")
 
     # -----------------------------------------------------------------------
     # Git sync
