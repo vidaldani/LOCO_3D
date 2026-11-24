@@ -1,0 +1,6 @@
+{
+  "name": "LOCO3D Auto (YOLO + Pose)",
+  "description": "Built-in auto-annotation pipeline: YOLOv11 segmentation + histogram depth filter + oriented bounding box estimation from point cloud.",
+  "author": "dan.vidal",
+  "version": "1.0"
+}

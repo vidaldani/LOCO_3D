@@ -1912,12 +1912,28 @@ class LabelEditorWindow(QMainWindow):
         load_btn = QPushButton("Load Project…")
         load_btn.clicked.connect(self._on_load_project)
         top_row.addWidget(load_btn)
+        self._eval_btn = QPushButton("📊 Evaluation")
+        self._eval_btn.setToolTip("Open the evaluation interface")
+        self._eval_btn.setEnabled(False)
+        self._eval_btn.clicked.connect(self._on_open_eval)
+        self._eval_btn.setStyleSheet(
+            "QPushButton { background:#1a7a30; color:#fff; border:1px solid #2a9a40; border-radius:4px; }"
+            "QPushButton:hover { background:#22963a; }"
+            "QPushButton:pressed { background:#155f24; }"
+            "QPushButton:disabled { background:#2a2a2a; color:#666; border-color:#444; }"
+        )
+        top_row.addWidget(self._eval_btn)
+        layout.addLayout(top_row)
+
+        manage_row = QHBoxLayout()
+        manage_row.setContentsMargins(0, 0, 0, 0)
         self._manage_users_btn = QPushButton("Manage Users")
         self._manage_users_btn.setToolTip("Manage project users (admin only)")
         self._manage_users_btn.clicked.connect(self._on_manage_users)
         self._manage_users_btn.setEnabled(False)
-        top_row.addWidget(self._manage_users_btn)
-        layout.addLayout(top_row)
+        manage_row.addWidget(self._manage_users_btn)
+        manage_row.addStretch()
+        layout.addLayout(manage_row)
 
         self._project_label = QLabel("No project loaded")
         self._project_label.setWordWrap(True)
@@ -2205,6 +2221,7 @@ class LabelEditorWindow(QMainWindow):
         self._verify_btn.setEnabled(False)
         self._remove_frame_btn.setEnabled(False)
         self._manage_users_btn.setEnabled(True)   # always available so users can be set up
+        self._eval_btn.setEnabled(bool(root))
         if root:
             users = _load_project_users(root)
             if users:
@@ -3961,6 +3978,28 @@ class LabelEditorWindow(QMainWindow):
                                     if u["username"] == self._current_user["username"]), None)
                 if current_rec:
                     self._current_user["role"] = current_rec["role"]
+
+    def _on_open_eval(self):
+        from eval_window import EvalWindow
+        if not self._dataset_root:
+            QMessageBox.warning(self, "No project", "Load a project first.")
+            return
+        annotator_dir = os.path.dirname(os.path.abspath(__file__))
+        win = EvalWindow(
+            dataset_root      = self._dataset_root,
+            pcd_dir           = self.pcd_dir or "",
+            img_dir           = self.rgb_dir or "",
+            ann_dir           = self._annotations_dir or "",
+            all_frame_files   = list(self._all_frame_files),
+            current_user      = self._current_user,
+            coco_cat_id_to_name = dict(self._coco_cat_id_to_name),
+            dataset_axes      = self._dataset_axes,
+            style_sheet       = self.styleSheet(),
+            annotator_dir     = annotator_dir,
+            parent            = None,
+        )
+        win.show()
+        self._eval_window = win  # keep reference
 
     def _on_flag_frame(self):
         if self.current_frame_id is None:
