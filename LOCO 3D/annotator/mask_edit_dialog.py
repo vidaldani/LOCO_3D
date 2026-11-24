@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (
     QGraphicsEllipseItem, QGraphicsLineItem,
     QHBoxLayout, QVBoxLayout, QListWidget, QListWidgetItem,
     QPushButton, QLabel, QComboBox, QSizePolicy, QMessageBox, QApplication,
-    QFrame, QMenu,
+    QFrame, QMenu, QCheckBox,
 )
 from PyQt5.QtCore import Qt, QPointF, QEvent, pyqtSignal
 from PyQt5.QtWidgets import QShortcut
@@ -637,27 +637,19 @@ class MaskEditDialog(QDialog):
         rl.setSpacing(6)
         rl.setContentsMargins(6, 6, 6, 6)
 
-        masks_hdr = QHBoxLayout()
-        masks_hdr.addWidget(QLabel("Masks (check → regen 3D BB):"))
-        masks_hdr.addStretch()
-        self._sel_all_btn = QPushButton("All")
-        self._sel_all_btn.setFixedWidth(32)
-        self._sel_all_btn.setToolTip("Select all masks")
-        self._sel_all_btn.clicked.connect(self._select_all_masks)
-        self._sel_none_btn = QPushButton("∅")
-        self._sel_none_btn.setFixedWidth(28)
-        self._sel_none_btn.setToolTip("Deselect all masks")
-        self._sel_none_btn.clicked.connect(self._deselect_all_masks)
-        masks_hdr.addWidget(self._sel_all_btn)
-        masks_hdr.addWidget(self._sel_none_btn)
-        rl.addLayout(masks_hdr)
+        rl.addWidget(QLabel("Masks (check → regen 3D BB):"))
+        self._select_all_cb = QCheckBox("Select all")
+        self._select_all_cb.setTristate(True)
+        self._select_all_cb.clicked.connect(self._on_select_all_clicked)
 
         self._list = QListWidget()
         self._list.currentRowChanged.connect(self._on_mask_selected)
+        self._list.itemChanged.connect(self._on_list_item_changed)
         self._list.installEventFilter(self)
         self._scene.mask_selection_requested.connect(self._list.setCurrentRow)
         self._scene.delete_active_mask.connect(self._on_delete_mask)
         rl.addWidget(self._list, 1)
+        rl.addWidget(self._select_all_cb)
 
         rl.addWidget(QLabel("Class:"))
         self._class_box = QComboBox()
@@ -735,13 +727,33 @@ class MaskEditDialog(QDialog):
             self._list.addItem(item)
         self._list.blockSignals(False)
 
-    def _select_all_masks(self):
+    def _on_select_all_clicked(self, checked: bool):
+        new_state = Qt.Checked if checked else Qt.Unchecked
+        self._select_all_cb.blockSignals(True)
+        self._select_all_cb.setCheckState(new_state)
+        self._select_all_cb.blockSignals(False)
+        self._list.blockSignals(True)
         for i in range(self._list.count()):
-            self._list.item(i).setCheckState(Qt.Checked)
+            self._list.item(i).setCheckState(new_state)
+        self._list.blockSignals(False)
 
-    def _deselect_all_masks(self):
-        for i in range(self._list.count()):
-            self._list.item(i).setCheckState(Qt.Unchecked)
+    def _on_list_item_changed(self, _item):
+        """Keep the Select-all checkbox in sync with individual row states."""
+        n = self._list.count()
+        if n == 0:
+            return
+        checked = sum(
+            1 for i in range(n)
+            if self._list.item(i).checkState() == Qt.Checked
+        )
+        self._select_all_cb.blockSignals(True)
+        if checked == 0:
+            self._select_all_cb.setCheckState(Qt.Unchecked)
+        elif checked == n:
+            self._select_all_cb.setCheckState(Qt.Checked)
+        else:
+            self._select_all_cb.setCheckState(Qt.PartiallyChecked)
+        self._select_all_cb.blockSignals(False)
 
     def _on_mask_selected(self, row: int):
         self._scene.set_active_mask(self._masks[row] if row >= 0 else None)
