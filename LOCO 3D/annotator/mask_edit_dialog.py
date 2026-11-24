@@ -715,7 +715,10 @@ class MaskEditDialog(QDialog):
         for i, mi in enumerate(self._masks):
             cid = mi.class_id
             name = self._classes[cid] if cid < len(self._classes) else f"class_{cid}"
-            self._list.addItem(f"[{i}]  {name}")
+            item = QListWidgetItem(f"[{i}]  {name}")
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked)
+            self._list.addItem(item)
         self._list.blockSignals(False)
 
     def _on_mask_selected(self, row: int):
@@ -1011,9 +1014,21 @@ class MaskEditDialog(QDialog):
             QMessageBox.warning(self, "No masks", "Draw at least one mask first.")
             return
 
+        # Collect indices of checked masks
+        checked_indices = [
+            i for i in range(self._list.count())
+            if self._list.item(i).checkState() == Qt.Checked
+        ]
+        if not checked_indices:
+            QMessageBox.warning(self, "None selected",
+                                "Check at least one mask in the list to generate its 3D BB.")
+            return
+
+        n = len(checked_indices)
+        noun = f"{n} selected mask{'s' if n != 1 else ''}"
         reply = QMessageBox.warning(
             self, "Replace existing results",
-            "This will replace all existing 3D bounding boxes for this frame.\n\nContinue?",
+            f"This will replace the 3D bounding boxes for the {noun}.\n\nContinue?",
             QMessageBox.Ok | QMessageBox.Cancel,
         )
         if reply == QMessageBox.Cancel:
@@ -1052,9 +1067,10 @@ class MaskEditDialog(QDialog):
         def _load_fn(idx):
             return rgb_arr, depth, fx, fy, cx, cy
 
-        # Rasterize each polygon into a full-resolution binary mask
+        # Rasterize only the checked masks into full-resolution binary masks
         precomputed_list = []
-        for mi in self._masks:
+        for i in checked_indices:
+            mi = self._masks[i]
             if len(mi.pts_px) < 3:
                 continue
             pts_arr = np.array(mi.pts_px, dtype=np.int32)
@@ -1070,6 +1086,7 @@ class MaskEditDialog(QDialog):
                 "bbox": [x1, y1, x2, y2],
                 "mask": full_mask,
                 "class_name": cls_name,
+                "mask_index": i,   # carry original index so caller can match it back
             })
 
         if not precomputed_list:
@@ -1095,6 +1112,12 @@ class MaskEditDialog(QDialog):
                 obj["centroid"]["y"] = -obj["centroid"]["y"]
                 obj["centroid"]["z"] = -obj["centroid"]["z"]
                 obj["rotations"]["y"] = -obj["rotations"]["y"]
+
+        # Tag each result with its original mask index so the main window can
+        # merge selectively instead of replacing all objects
+        for j, obj in enumerate(objs):
+            if j < len(precomputed_list):
+                obj["_mask_index"] = precomputed_list[j]["mask_index"]
 
         self.objects_generated.emit(objs)
         self.accept()

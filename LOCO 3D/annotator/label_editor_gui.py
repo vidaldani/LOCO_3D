@@ -3759,7 +3759,13 @@ class LabelEditorWindow(QMainWindow):
         self._load_rgb_image(self.current_frame_id)
 
     def _on_masks_generated(self, new_objs: list):
-        """Replace current frame's objects with results from mask-editor pipeline."""
+        """Update 3D BBs from the mask-editor pipeline.
+
+        If every result carries a ``_mask_index`` tag the update is selective:
+        only the objects at those indices are replaced and all other objects are
+        kept intact.  When no tags are present (legacy / full-regeneration path)
+        all objects are replaced as before.
+        """
         if not new_objs:
             QMessageBox.warning(
                 self, "No objects estimated",
@@ -3768,17 +3774,41 @@ class LabelEditorWindow(QMainWindow):
             )
             return
 
-        n_prev = len(self.current_objects)
-        # Clear current objects from UI
+        selective = all("_mask_index" in o for o in new_objs)
+
+        if selective:
+            # Merge: update only the objects at the given indices
+            merged = list(self.current_objects)  # shallow copy — entries replaced below
+            for new_obj in new_objs:
+                idx = new_obj.pop("_mask_index")
+                if idx >= len(merged):
+                    continue
+                old = merged[idx]
+                # Overwrite only the 3D-BB fields; keep name, bbox_2d, etc.
+                for field in ("centroid", "dimensions", "rotations", "no_3d_bb"):
+                    if field in new_obj:
+                        old[field] = new_obj[field]
+                    elif field in old and field == "no_3d_bb":
+                        old.pop("no_3d_bb", None)
+            objs_to_save = merged
+            n_updated = len(new_objs)
+        else:
+            # Full replacement (all checkboxes were ticked, legacy behaviour)
+            for o in new_objs:
+                o.pop("_mask_index", None)
+            objs_to_save = new_objs
+            n_updated = len(new_objs)
+
+        # Clear UI
         self._clear_active_widget()
         self._selected_obj_idx = -1
         self.current_objects.clear()
 
-        # Write new labels
+        # Write labels
         if self._coco_db is not None:
             seg_dir = self._seg_labels_dir
             txt_path = os.path.join(seg_dir, f"{self.current_frame_id}.txt") if seg_dir else None
-            self._save_to_coco(self.current_frame_id, new_objs, txt_path)
+            self._save_to_coco(self.current_frame_id, objs_to_save, txt_path)
         elif self.labels_dir:
             label_path = os.path.join(self.labels_dir, f"{self.current_frame_id}.json")
             import json as _json
@@ -3786,29 +3816,23 @@ class LabelEditorWindow(QMainWindow):
                 "folder":   os.path.basename(self.labels_dir),
                 "filename": f"{self.current_frame_id}.pcd",
                 "path":     os.path.join(self.pcd_dir or "", f"{self.current_frame_id}.pcd"),
-                "objects":  new_objs,
+                "objects":  objs_to_save,
             }
             with open(label_path, "w") as f:
                 _json.dump(data, f, indent="\t")
 
-        # Data already saved above — clear dirty flag so _load_frame's unsaved-changes
-        # guard doesn't fire and accidentally overwrite the just-written annotations.
         self._dirty = False
-        # Reload frame so UI reflects new objects
         self._load_frame(self.current_frame_id)
 
-        # Record that this frame was annotated (masks → 3D BBs pipeline)
         meta_updates: dict = {"manually_modified": True,
                               "manually_modified_at": datetime.datetime.now().isoformat(timespec="seconds")}
         if self._current_user:
             meta_updates["annotated_by"] = self._current_user["username"]
         self._update_frame_meta(self.current_frame_id, meta_updates)
 
-        skipped = n_prev - len(new_objs) if n_prev > len(new_objs) else 0
-        msg = f"Generated {len(new_objs)} 3D BB(s) from masks for '{self.current_frame_id}'"
-        if skipped > 0:
-            msg += f" ({skipped} mask(s) rejected by depth/size filters)"
-        self._update_status(msg)
+        self._update_status(
+            f"Updated 3D BB for {n_updated} object(s) in '{self.current_frame_id}'"
+        )
 
     def _on_masks_class_updated(self, mask_info: list):
         """Update object names when masks are saved with changed class IDs."""
