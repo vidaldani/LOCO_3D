@@ -465,5 +465,19 @@
     }
   ],
   "annotated_by": "dan.vidal",
-  "annotated_at": "2026-11-24T15:29:23"
+  "annotated_at": "2026-11-24T15:29:23",
+  "review": {
+    "reviewer": "dan.vidal",
+    "reviewed_at": "2026-11-25T11:17:52",
+    "items": [
+      {
+        "comment": "Please, avoid merging the 3D BB of stacked objects, they should be one on top of the other",
+        "object_index": 7,
+        "resolve_comment": "Tes reply",
+        "resolved": false,
+        "type": "3D BB"
+      }
+    ],
+    "for": "bo.shi"
+  }
 }
