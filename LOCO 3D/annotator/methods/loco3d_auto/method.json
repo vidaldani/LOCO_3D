@@ -1,6 +1,11 @@
 {
-  "name": "LOCO3D Auto (YOLO + Pose)",
+  "name": "SHADE",
   "description": "Built-in auto-annotation pipeline: YOLOv11 segmentation + histogram depth filter + oriented bounding box estimation from point cloud.",
   "author": "dan.vidal",
-  "version": "1.0"
+  "version": "1.0",
+  "parameters": {
+    "confidence": {"type": "float", "default": 0.5, "label": "Confidence threshold", "min": 0.01, "max": 1.0, "step": 0.05},
+    "resolution": {"type": "int", "default": 1, "label": "Histogram bins / metre", "min": 1, "max": 100},
+    "max_height_percent": {"type": "float", "default": 5.0, "label": "Max height filter (%)", "min": 0.5, "max": 50.0, "step": 0.5}
+  }
 }

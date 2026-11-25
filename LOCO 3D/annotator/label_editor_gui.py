@@ -3,6 +3,7 @@ import os
 import re
 import json
 import copy
+import math
 import random
 import hashlib
 import datetime
@@ -25,9 +26,12 @@ from PyQt5.QtWidgets import (
     QDialog, QComboBox, QDialogButtonBox, QFormLayout, QDoubleSpinBox,
     QStyle, QCheckBox, QSizePolicy, QScrollArea, QFrame, QProgressBar,
     QInputDialog, QTabWidget, QTreeWidget, QTreeWidgetItem, QHeaderView,
-    QRadioButton, QButtonGroup, QToolButton,
+    QRadioButton, QButtonGroup, QToolButton, QStackedWidget, QAbstractItemView,
+    QTableWidget, QTableWidgetItem, QMenu,
+    QStyledItemDelegate, QStyleOptionButton, QToolTip,
+    QSpinBox,
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRect, QEvent
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QRect, QEvent, QSize, QObject
 from PyQt5.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QIcon
 
 pv.set_plot_theme("dark")
@@ -199,6 +203,7 @@ _ICON_MAP: dict[str, tuple[str, int]] = {
     "delete":   ("edit-delete",               QStyle.SP_TrashIcon),
     "new":      ("document-new",              QStyle.SP_FileIcon),
     "load":     ("document-open",             QStyle.SP_DialogOpenButton),
+    "download": ("document-save-as",          QStyle.SP_DialogSaveButton),
 }
 
 def _icon(name: str) -> QIcon:
@@ -390,6 +395,24 @@ def build_pv_bbox(obj) -> tuple[pv.PolyData, tuple]:
     color = CLASS_COLORS.get(obj["name"].replace(" ", "_"), DEFAULT_COLOR)
     return mesh, color
 
+
+_METHOD_COLORS = ["#00BFFF", "#FF8C00", "#DA70D6", "#7CFC00", "#FF6347"]
+
+def _pred_bbox_to_pv_mesh(pred: dict) -> pv.PolyData:
+    """Convert eval prediction bbox_3d dict to a PyVista wireframe mesh."""
+    b = pred["bbox_3d"]
+    c = b["center"]
+    d = b["dimensions"]
+    yaw_rad = b.get("yaw", 0.0)
+    yaw_deg = math.degrees(yaw_rad)
+    obj = {
+        "centroid":   {"x": c["x"], "y": c["y"], "z": c["z"]},
+        "dimensions": {"length": d["length"], "width": d["width"], "height": d["height"]},
+        "rotations":  {"x": 0.0, "y": yaw_deg, "z": 0.0},
+        "name":       "",
+    }
+    mesh, _ = build_pv_bbox(obj)
+    return mesh
 
 
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
@@ -909,12 +932,72 @@ class _FlagCommentDialog(QDialog):
         self.accept()
 
 
+class _HeaderTooltipFilter(QObject):
+    """Event filter that shows per-section tooltips on a QHeaderView without subclassing it."""
+    def __init__(self, header: QHeaderView, tips: list):
+        super().__init__(header)
+        self._header = header
+        self._tips   = tips
+        header.viewport().setMouseTracking(True)
+        header.viewport().installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.ToolTip:
+            idx = self._header.logicalIndexAt(event.pos())
+            if 0 <= idx < len(self._tips) and self._tips[idx]:
+                QToolTip.showText(event.globalPos(), self._tips[idx], obj)
+                return True
+            QToolTip.hideText()
+            return True
+        return False
+
+
+class _CenteredCheckDelegate(QStyledItemDelegate):
+    """Draws the checkbox in column 0 horizontally centered."""
+    def paint(self, painter, option, index):
+        if index.column() != 0:
+            super().paint(painter, option, index)
+            return
+        # Draw row background (selection / hover) without the default checkbox
+        from PyQt5.QtWidgets import QStyleOptionViewItem
+        bg_opt = QStyleOptionViewItem(option)
+        bg_opt.text = ""
+        bg_opt.features = QStyleOptionViewItem.None_
+        QApplication.style().drawControl(QStyle.CE_ItemViewItem, bg_opt, painter)
+        # Draw checkbox centered
+        check = index.data(Qt.CheckStateRole)
+        if check is None:
+            return
+        style = QApplication.style()
+        w = style.pixelMetric(QStyle.PM_IndicatorWidth,  None, None)
+        h = style.pixelMetric(QStyle.PM_IndicatorHeight, None, None)
+        x = option.rect.x() + (option.rect.width()  - w) // 2
+        y = option.rect.y() + (option.rect.height() - h) // 2
+        cb = QStyleOptionButton()
+        cb.rect    = QRect(x, y, w, h)
+        cb.palette = option.palette
+        cb.state   = QStyle.State_Enabled | QStyle.State_Active | (
+            QStyle.State_On if check == Qt.Checked else QStyle.State_Off)
+        style.drawPrimitive(QStyle.PE_IndicatorCheckBox, cb, painter)
+
+    def editorEvent(self, event, model, option, index):
+        if index.column() == 0 and event.type() == QEvent.MouseButtonRelease:
+            if event.button() == Qt.LeftButton:
+                cur = index.data(Qt.CheckStateRole)
+                model.setData(index,
+                              Qt.Unchecked if cur == Qt.Checked else Qt.Checked,
+                              Qt.CheckStateRole)
+                return True
+        return super().editorEvent(event, model, option, index)
+
+
 class _ReviewChecklistDialog(QDialog):
     """Review dialog using a QTreeWidget — same visual language as the scene
     and object lists.  Columns: Resolved | Object | Type | Comment | 💬reply.
     Admin can resolve and delete; student can resolve and reply."""
 
-    def __init__(self, review: dict, is_admin: bool = False, parent=None):
+    def __init__(self, review: dict, is_admin: bool = False, parent=None,
+                 show_buttons: bool = True):
         super().__init__(parent)
         self.setWindowTitle("📝 Review")
         self.setModal(True)
@@ -938,100 +1021,148 @@ class _ReviewChecklistDialog(QDialog):
         layout.addWidget(hdr)
 
         self._tree = QTreeWidget()
-        self._tree.setColumnCount(5)
-        self._tree.setHeaderLabels(["✓", "Object", "Type", "Comment", ""])
-        self._tree.setRootIsDecorated(True)
-        self._tree.setAlternatingRowColors(True)
+        self._tree.setColumnCount(4)
+        self._tree.setHeaderLabels(["✓", "Object", "Type", "Comment"])
+        self._tree.setRootIsDecorated(False)
+        self._tree.setAlternatingRowColors(False)
+        self._tree.setIndentation(16)
+        self._tree.setWordWrap(True)
+        self._tree.setUniformRowHeights(False)
+        self._tree.setFocusPolicy(Qt.NoFocus)
+        self._tree.setStyleSheet(
+            "QTreeWidget { outline: 0; }"
+            "QTreeWidget::item { border: none; }"
+            "QTreeWidget::item:selected { background:#094771; color:#fff; }"
+            "QTreeWidget::item:hover { background:#2a2d2e; }"
+        )
+        hi = self._tree.headerItem()
+        for col in range(4):
+            hi.setTextAlignment(col, Qt.AlignCenter)
         h = self._tree.header()
+        h.setStretchLastSection(True)
+        h.setMinimumSectionSize(0)
         h.setSectionResizeMode(0, QHeaderView.Fixed)
-        h.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        h.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        h.setSectionResizeMode(1, QHeaderView.Interactive)
+        h.setSectionResizeMode(2, QHeaderView.Interactive)
         h.setSectionResizeMode(3, QHeaderView.Stretch)
-        h.setSectionResizeMode(4, QHeaderView.Fixed)
-        self._tree.setColumnWidth(0, 24)
-        self._tree.setColumnWidth(4, 30)
+        h.resizeSection(0, 30)
+        h.resizeSection(1, 72)
+        h.resizeSection(2, 72)
+        self._tree.setItemDelegateForColumn(0, _CenteredCheckDelegate(self._tree))
         layout.addWidget(self._tree, stretch=1)
 
         for item_data in self.items:
             self._add_tree_row(item_data)
+        self._tree.clearSelection()
 
-        if is_admin:
-            self._tree.setContextMenuPolicy(Qt.CustomContextMenu)
-            self._tree.customContextMenuRequested.connect(self._on_context_menu)
+        # right-click: reply for everyone, delete only for admin
+        self._tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._on_context_menu)
 
-        btns = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
-        btns.accepted.connect(self._on_accept)
-        btns.rejected.connect(self.reject)
-        layout.addWidget(btns)
+        if show_buttons:
+            btns = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+            btns.accepted.connect(self._on_accept)
+            btns.rejected.connect(self.reject)
+            layout.addWidget(btns)
 
     def _add_tree_row(self, item_data: dict):
         idx   = item_data.get("object_index")
         itype = item_data.get("type", "")
         row   = QTreeWidgetItem()
-        row.setFlags(row.flags() | Qt.ItemIsUserCheckable)
+        row.setFlags(row.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable | Qt.ItemIsEnabled)
         resolved = bool(item_data.get("resolved"))
         row.setCheckState(0, Qt.Checked if resolved else Qt.Unchecked)
+        row.setTextAlignment(0, Qt.AlignCenter)
         row.setText(1, "General" if idx is None else f"ID [{idx}]")
+        row.setTextAlignment(1, Qt.AlignCenter)
         row.setText(2, itype if idx is not None else "")
-        row.setText(3, item_data.get("comment", ""))
+        row.setTextAlignment(2, Qt.AlignCenter)
+        full_comment = item_data.get("comment", "")
+        row.setText(3, full_comment)
+        row.setToolTip(3, full_comment)
         row.setData(0, Qt.UserRole, item_data)
         self._tree.addTopLevelItem(row)
-
-        # Reply child (always visible if reply text exists)
-        existing_reply = item_data.get("resolve_comment", "")
-        if existing_reply:
-            self._ensure_reply_child(row, existing_reply)
+        # Reload existing replies (stored as a list; fall back to legacy single field)
+        replies = item_data.get("replies") or (
+            [item_data["resolve_comment"]] if item_data.get("resolve_comment") else [])
+        for r in replies:
+            self._add_reply_text_row(row, r)
+        if replies:
             row.setExpanded(True)
 
-        # 💬 button in last column
-        btn = QPushButton("💬")
-        btn.setFixedSize(26, 20)
-        btn.setToolTip("Open / add reply")
-        btn.clicked.connect(lambda _checked, r=row: self._toggle_reply(r))
-        self._tree.setItemWidget(row, 4, btn)
+    def _add_reply_text_row(self, parent: QTreeWidgetItem, text: str) -> QTreeWidgetItem:
+        """Permanent read-only reply row."""
+        child = QTreeWidgetItem(parent)
+        child.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        child.setText(1, "↳")
+        child.setTextAlignment(1, Qt.AlignCenter)
+        child.setText(3, text)
+        child.setToolTip(3, text)
+        child.setData(0, Qt.UserRole, {"_is_reply": True, "text": text})
+        return child
 
-    def _ensure_reply_child(self, parent_row, text=""):
-        if parent_row.childCount() == 0:
-            child = QTreeWidgetItem(parent_row)
-            child.setFlags(Qt.ItemIsEnabled)
-            child.setText(1, "↳")
-            edit = QLineEdit(text)
-            edit.setPlaceholderText("Reply…")
-            self._tree.setItemWidget(child, 3, edit)
-        else:
-            w = self._tree.itemWidget(parent_row.child(0), 3)
-            if isinstance(w, QLineEdit) and not w.text():
-                w.setText(text)
+    def _add_reply_input_row(self, parent: QTreeWidgetItem):
+        """Inline QLineEdit row — pressing Enter commits the reply as a text row."""
+        input_row = QTreeWidgetItem(parent)
+        input_row.setFlags(Qt.ItemIsEnabled)
+        input_row.setText(1, "↳")
+        input_row.setTextAlignment(1, Qt.AlignCenter)
+        edit = QLineEdit()
+        edit.setPlaceholderText("Type reply and press Enter…")
+        self._tree.setItemWidget(input_row, 3, edit)
+        parent.setExpanded(True)
 
-    def _toggle_reply(self, row: QTreeWidgetItem):
-        if row.childCount() == 0:
-            self._ensure_reply_child(row)
-            row.setExpanded(True)
-        else:
-            row.setExpanded(not row.isExpanded())
+        def _commit():
+            text = edit.text().strip()
+            parent.removeChild(input_row)
+            if not text:
+                return
+            self._add_reply_text_row(parent, text)
+            parent.setExpanded(True)
+            # Persist in parent's data
+            data = dict(parent.data(0, Qt.UserRole))
+            replies = list(data.get("replies") or (
+                [data["resolve_comment"]] if data.get("resolve_comment") else []))
+            replies.append(text)
+            data["replies"] = replies
+            data["resolve_comment"] = text
+            parent.setData(0, Qt.UserRole, data)
+
+        edit.returnPressed.connect(_commit)
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(0, edit.setFocus)
 
     def _on_context_menu(self, pos):
-        if not self._is_admin:
-            return
         item = self._tree.itemAt(pos)
-        if item is None or item.parent() is not None:
+        if item is None:
             return
+        is_reply = item.parent() is not None
         menu = QMenu(self)
-        del_act = menu.addAction("🗑  Remove comment")
-        if menu.exec_(self._tree.viewport().mapToGlobal(pos)) == del_act:
-            idx = self._tree.indexOfTopLevelItem(item)
-            self._tree.takeTopLevelItem(idx)
+        reply_act = menu.addAction("↩  Add reply")
+        del_act   = menu.addAction("🗑  Remove") if (is_reply or self._is_admin) else None
+        chosen = menu.exec_(self._tree.viewport().mapToGlobal(pos))
+        if chosen == reply_act:
+            # Replies to a reply attach to the same parent (sibling), not nested
+            parent = item.parent() if is_reply else item
+            self._add_reply_input_row(parent)
+        elif del_act and chosen == del_act:
+            if is_reply:
+                parent = item.parent()
+                reply_text = item.text(3)
+                parent.removeChild(item)
+                data = dict(parent.data(0, Qt.UserRole))
+                data["replies"] = [r for r in data.get("replies", []) if r != reply_text]
+                data["resolve_comment"] = data["replies"][-1] if data["replies"] else ""
+                parent.setData(0, Qt.UserRole, data)
+            elif self._is_admin:
+                self._tree.takeTopLevelItem(self._tree.indexOfTopLevelItem(item))
 
     def _on_accept(self):
         result = []
         for i in range(self._tree.topLevelItemCount()):
-            row   = self._tree.topLevelItem(i)
-            data  = dict(row.data(0, Qt.UserRole))
+            row  = self._tree.topLevelItem(i)
+            data = dict(row.data(0, Qt.UserRole))
             data["resolved"] = (row.checkState(0) == Qt.Checked)
-            if row.childCount() > 0:
-                w = self._tree.itemWidget(row.child(0), 3)
-                if isinstance(w, QLineEdit):
-                    data["resolve_comment"] = w.text().strip()
             result.append(data)
         self.items = result
         self.accept()
@@ -1855,6 +1986,11 @@ class LabelEditorWindow(QMainWindow):
         self._3d_bb_manually_touched = False     # True when user edits spinboxes manually
         self._block_manual_tracking = False      # True during programmatic field updates
         self._clipboard: dict | None = None  # {"type": "pose"|"dims"|"pose_dims", ...}
+        self._eval_mode: bool = False
+        self._eval_gt_objects: list = []
+        self._eval_method_results: dict = {}   # method_name → {frame_id: [preds]}
+        self._eval_method_metrics: dict = {}   # method_name → metrics dict
+        self._eval_run_worker = None
         # COCO per-frame format support
         self._coco_db:            dict | None = None   # {"categories": [...]} when COCO mode active
         self._annotations_dir:    str  | None = None   # path to annotations/ directory
@@ -1894,12 +2030,16 @@ class LabelEditorWindow(QMainWindow):
     # UI construction
     # ------------------------------------------------------------------
     def _build_ui(self):
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(self._build_left_panel())
-        splitter.addWidget(self._build_center_panel())
-        splitter.addWidget(self._build_right_panel())
-        splitter.setSizes([220, 800, 360])
-        self.setCentralWidget(splitter)
+        self._main_splitter = QSplitter(Qt.Horizontal)
+        self._main_splitter.addWidget(self._build_left_panel())
+        self._main_splitter.addWidget(self._build_center_panel())
+        self._right_stack = QStackedWidget()
+        self._right_stack.addWidget(self._build_right_panel())   # 0 = labelling
+        self._right_stack.addWidget(self._build_eval_panel())    # 1 = evaluation
+        self._right_stack.setMinimumWidth(350)
+        self._main_splitter.addWidget(self._right_stack)
+        self._main_splitter.setSizes([220, 895, 350])
+        self.setCentralWidget(self._main_splitter)
 
     def _build_left_panel(self) -> QWidget:
         w = QWidget()
@@ -1907,33 +2047,37 @@ class LabelEditorWindow(QMainWindow):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
 
-        top_row = QHBoxLayout()
-        top_row.setContentsMargins(0, 0, 0, 0)
+        # 2×2 grid: row 0 = [Load Project | Evaluation], row 1 = [Manage Users | (empty)]
+        # Both columns equal stretch → all three buttons share the same column widths
+        btn_grid = QGridLayout()
+        btn_grid.setContentsMargins(0, 0, 0, 0)
+        btn_grid.setSpacing(6)
+        btn_grid.setColumnStretch(0, 1)
+        btn_grid.setColumnStretch(1, 1)
+
         load_btn = QPushButton("Load Project…")
         load_btn.clicked.connect(self._on_load_project)
-        top_row.addWidget(load_btn)
+        btn_grid.addWidget(load_btn, 0, 0)
+
         self._eval_btn = QPushButton("📊 Evaluation")
-        self._eval_btn.setToolTip("Open the evaluation interface")
+        self._eval_btn.setToolTip("Switch to evaluation mode")
         self._eval_btn.setEnabled(False)
-        self._eval_btn.clicked.connect(self._on_open_eval)
+        self._eval_btn.clicked.connect(self._on_toggle_eval_mode)
         self._eval_btn.setStyleSheet(
             "QPushButton { background:#1a7a30; color:#fff; border:1px solid #2a9a40; border-radius:4px; }"
             "QPushButton:hover { background:#22963a; }"
             "QPushButton:pressed { background:#155f24; }"
             "QPushButton:disabled { background:#2a2a2a; color:#666; border-color:#444; }"
         )
-        top_row.addWidget(self._eval_btn)
-        layout.addLayout(top_row)
+        btn_grid.addWidget(self._eval_btn, 0, 1)
 
-        manage_row = QHBoxLayout()
-        manage_row.setContentsMargins(0, 0, 0, 0)
         self._manage_users_btn = QPushButton("Manage Users")
         self._manage_users_btn.setToolTip("Manage project users (admin only)")
         self._manage_users_btn.clicked.connect(self._on_manage_users)
         self._manage_users_btn.setEnabled(False)
-        manage_row.addWidget(self._manage_users_btn)
-        manage_row.addStretch()
-        layout.addLayout(manage_row)
+        btn_grid.addWidget(self._manage_users_btn, 1, 0)
+
+        layout.addLayout(btn_grid)
 
         self._project_label = QLabel("No project loaded")
         self._project_label.setWordWrap(True)
@@ -1980,6 +2124,7 @@ class LabelEditorWindow(QMainWindow):
         hdr.setSectionResizeMode(2, QHeaderView.Fixed)
         self.file_list.setColumnWidth(2, 40)
         hdr.setMinimumSectionSize(80)
+        self.file_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.file_list.setStyleSheet(
             "QTreeWidget::item:selected { background:#094771; color:#fff; }"
             "QTreeWidget::item:hover { background:#2a2d2e; }"
@@ -1992,11 +2137,18 @@ class LabelEditorWindow(QMainWindow):
         self.file_list.itemChanged.connect(self._on_item_check_changed)
         self.file_list.itemDoubleClicked.connect(self._on_file_list_double_clicked)
         self.file_list.itemClicked.connect(self._on_file_list_icon_clicked)
+        self.file_list.viewport().setMouseTracking(True)
+        self.file_list.viewport().installEventFilter(self)
         layout.addWidget(self.file_list)
 
         self._file_count_label = QLabel("")
         self._file_count_label.setStyleSheet("color: #888; font-size: 11px;")
         layout.addWidget(self._file_count_label)
+
+        self._labelling_btns_w = QWidget()
+        lbw_lay = QVBoxLayout(self._labelling_btns_w)
+        lbw_lay.setContentsMargins(0, 0, 0, 0)
+        lbw_lay.setSpacing(4)
 
         bottom_btn_row = QHBoxLayout()
         self._verify_btn = QPushButton("✓ Verify frame")
@@ -2017,15 +2169,16 @@ class LabelEditorWindow(QMainWindow):
         self._review_btn.setVisible(False)
         self._review_btn.clicked.connect(self._on_add_review)
         bottom_btn_row.addWidget(self._review_btn)
-        layout.addLayout(bottom_btn_row)
+        lbw_lay.addLayout(bottom_btn_row)
 
         self._remove_frame_btn = QPushButton("🗑 Remove frame")
         self._remove_frame_btn.setToolTip("Permanently delete this frame and all its data (admin only)")
         self._remove_frame_btn.setEnabled(False)
         self._remove_frame_btn.setStyleSheet("color: #e05252;")
         self._remove_frame_btn.clicked.connect(self._on_remove_frame)
-        layout.addWidget(self._remove_frame_btn)
+        lbw_lay.addWidget(self._remove_frame_btn)
 
+        layout.addWidget(self._labelling_btns_w)
         return w
 
     def _build_center_panel(self) -> QWidget:
@@ -2156,6 +2309,796 @@ class LabelEditorWindow(QMainWindow):
         w_layout.addWidget(self._right_splitter)
         return w
 
+    def _build_eval_panel(self) -> QWidget:
+        """Right panel shown in evaluation mode — mirrors the labelling panel structure."""
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(8, 8, 8, 8)
+        lay.setSpacing(0)
+
+        # ── IoU threshold (compact row at top) ────────────────────────
+        iou_row = QHBoxLayout()
+        iou_row.setContentsMargins(0, 0, 0, 4)
+        iou_row.addWidget(QLabel("IoU threshold:"))
+        self._eval_iou_spin = QDoubleSpinBox()
+        self._eval_iou_spin.setRange(0.05, 0.95)
+        self._eval_iou_spin.setSingleStep(0.05)
+        self._eval_iou_spin.setDecimals(2)
+        self._eval_iou_spin.setValue(0.50)
+        self._eval_iou_spin.setFixedWidth(70)
+        self._eval_iou_spin.valueChanged.connect(self._eval_refresh_comparison)
+        iou_row.addWidget(self._eval_iou_spin)
+        iou_row.addStretch()
+        lay.addLayout(iou_row)
+
+        # ── Panel 1: Objects (same header style as labelling) ─────────
+        self._eval_obj_panel = QWidget()
+        obj_lay = QVBoxLayout(self._eval_obj_panel)
+        obj_lay.setContentsMargins(0, 0, 0, 4)
+        obj_lay.setSpacing(4)
+        obj_lay.addWidget(QLabel("Objects:"))
+
+        self._eval_obj_list = QTreeWidget()
+        self._eval_obj_list.setHeaderLabels(["#", "Class", "Score"])
+        self._eval_obj_list.setRootIsDecorated(False)
+        hdr = self._eval_obj_list.header()
+        hdr.setSectionResizeMode(0, QHeaderView.Fixed)
+        hdr.setSectionResizeMode(1, QHeaderView.Stretch)
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self._eval_obj_list.setColumnWidth(0, 28)
+        self._eval_obj_list.setStyleSheet(
+            "QTreeWidget::item:selected { background:#094771; color:#fff; }"
+            "QTreeWidget::item:hover { background:#2a2d2e; }"
+        )
+        self._eval_obj_list.header().setStyleSheet(
+            "QHeaderView::section { background:#2a2a2a; color:#888; "
+            "border:none; border-bottom:1px solid #3c3c3c; padding:2px 4px; }"
+        )
+        self._eval_obj_list.currentItemChanged.connect(self._eval_refresh_comparison)
+        obj_lay.addWidget(self._eval_obj_list)
+        lay.addWidget(self._eval_obj_panel, stretch=1)
+
+        # ── Panel 2: Dimensions comparison ────────────────────────────────
+        _lbl_dim = QLabel("Dimensions:")
+        _lbl_dim.setContentsMargins(0, 6, 0, 2)
+        lay.addWidget(_lbl_dim)
+
+        # Field order matches the labelling panel: position first, then size
+        self._eval_cmp_row_labels = ["X", "Y", "Z", "Length", "Width", "Height", "Yaw (°)", "IoU"]
+        _TABLE_SS = (
+            "QTableWidget { background:#252526; border:1px solid #3c3c3c; gridline-color:#3c3c3c; }"
+            "QHeaderView::section { background:#2a2a2a; color:#888; border:none; "
+            "border-bottom:1px solid #3c3c3c; padding:2px 4px; }"
+            "QTableWidget::item { color:#d4d4d4; }"
+        )
+        # 4 columns: Variable | GT | Method 1 | Method 2  (minimum; expands when more methods run)
+        self._eval_cmp_table = QTableWidget(len(self._eval_cmp_row_labels), 4)
+        self._eval_cmp_table.setHorizontalHeaderLabels(["Variable", "GT", "Method 1", "Method 2"])
+        self._eval_cmp_table.setVerticalHeader(self._eval_cmp_table.verticalHeader())
+        self._eval_cmp_table.verticalHeader().setVisible(False)
+        self._eval_cmp_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._eval_cmp_table.setAlternatingRowColors(False)
+        self._eval_cmp_table.setStyleSheet(_TABLE_SS)
+        _cmp_hdr = self._eval_cmp_table.horizontalHeader()
+        _cmp_hdr.setSectionResizeMode(0, QHeaderView.Fixed)
+        _cmp_hdr.resizeSection(0, 72)
+        for c in range(1, 4):
+            _cmp_hdr.setSectionResizeMode(c, QHeaderView.Stretch)
+        self._eval_cmp_table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # Fill Variable column (permanent, header-style)
+        for r, name in enumerate(self._eval_cmp_row_labels):
+            self._eval_cmp_table.setRowHeight(r, 24)
+            it = QTableWidgetItem(name)
+            it.setFlags(Qt.ItemIsEnabled)
+            it.setBackground(QColor("#2a2a2a"))
+            it.setForeground(QColor("#888888"))
+            it.setTextAlignment(Qt.AlignCenter)
+            self._eval_cmp_table.setItem(r, 0, it)
+        lay.addWidget(self._eval_cmp_table)
+        # Adjust to exact content height once fonts are ready
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(0, self._adjust_dim_table_height)
+
+        # ── Panel 3: Metrics ──────────────────────────────────────────
+        _lbl_met = QLabel("Metrics:")
+        _lbl_met.setContentsMargins(0, 6, 0, 2)
+        lay.addWidget(_lbl_met)
+
+        self._eval_bottom_panel = QWidget()
+        bot_lay = QVBoxLayout(self._eval_bottom_panel)
+        bot_lay.setContentsMargins(0, 0, 0, 0)
+        bot_lay.setSpacing(0)
+
+        # Rows = metrics, columns = Variable | GT | Method 1 | Method 2
+        # (mirrors the Dimensions table structure above)
+        self._eval_metrics_row_labels = ["AP@0.5", "AP@0.25", "mAP/cls", "ATE(m)", "AOE(rad)", "FPS"]
+        _METRIC_TIPS = [
+            "Average Precision at IoU threshold 0.50",
+            "Average Precision at IoU threshold 0.25",
+            "Mean Average Precision per object class",
+            "Average Translation Error — mean distance between predicted and GT centre (metres)",
+            "Average Orientation Error — mean angular difference between predicted and GT yaw (radians)",
+            "Frames Per Second — inference throughput",
+        ]
+        self._eval_metrics_table = QTableWidget(len(self._eval_metrics_row_labels), 4)
+        self._eval_metrics_table.setHorizontalHeaderLabels(["Variable", "GT", "Method 1", "Method 2"])
+        self._eval_metrics_table.verticalHeader().setVisible(False)
+        self._eval_metrics_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._eval_metrics_table.setAlternatingRowColors(False)
+        self._eval_metrics_table.setStyleSheet(_TABLE_SS)
+        self._eval_metrics_table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        _mhdr = self._eval_metrics_table.horizontalHeader()
+        _mhdr.setSectionResizeMode(0, QHeaderView.Fixed)
+        _mhdr.resizeSection(0, 72)
+        for c in range(1, 4):
+            _mhdr.setSectionResizeMode(c, QHeaderView.Stretch)
+        # Fill Variable column + GT column
+        for r, (name, tip) in enumerate(zip(self._eval_metrics_row_labels, _METRIC_TIPS)):
+            self._eval_metrics_table.setRowHeight(r, 24)
+            it = QTableWidgetItem(name)
+            it.setFlags(Qt.ItemIsEnabled)
+            it.setBackground(QColor("#2a2a2a"))
+            it.setForeground(QColor("#888888"))
+            it.setTextAlignment(Qt.AlignCenter)
+            it.setToolTip(tip)
+            self._eval_metrics_table.setItem(r, 0, it)
+            gt_it = QTableWidgetItem("—")
+            gt_it.setFlags(Qt.ItemIsEnabled)
+            gt_it.setTextAlignment(Qt.AlignCenter)
+            self._eval_metrics_table.setItem(r, 1, gt_it)
+        self._eval_metrics_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._eval_metrics_table.customContextMenuRequested.connect(
+            self._eval_metrics_context_menu)
+        bot_lay.addWidget(self._eval_metrics_table)
+        QTimer.singleShot(0, self._adjust_metrics_table_height)
+
+        self._eval_progress = QProgressBar()
+        self._eval_progress.setRange(0, 0)
+        self._eval_progress.setVisible(False)
+        self._eval_progress.setFixedHeight(6)
+        self._eval_progress.setStyleSheet(
+            "QProgressBar { border:none; background:#2a2a2a; }"
+            "QProgressBar::chunk { background:#007acc; }"
+        )
+        bot_lay.addWidget(self._eval_progress)
+
+        self._eval_status_lbl = QLabel("")
+        self._eval_status_lbl.setStyleSheet("color:#888; font-size:11px;")
+        self._eval_status_lbl.setWordWrap(True)
+        bot_lay.addWidget(self._eval_status_lbl)
+
+        self._eval_run_btn = QPushButton("Load / Select Method…")
+        self._eval_run_btn.setFixedHeight(38)
+        self._eval_run_btn.setStyleSheet(
+            "QPushButton { background:#1a7a30; color:#fff; font-weight:bold; "
+            "border:1px solid #2a9a40; border-radius:4px; font-size:13px; }"
+            "QPushButton:hover { background:#22963a; }"
+            "QPushButton:pressed { background:#155f24; }"
+            "QPushButton:disabled { background:#2a2a2a; color:#666; border-color:#444; }"
+        )
+        self._eval_run_btn.setEnabled(False)
+        self._eval_run_btn.clicked.connect(self._eval_on_run_method)
+        bot_lay.addWidget(self._eval_run_btn)
+
+        lay.addWidget(self._eval_bottom_panel)
+        return w
+
+    # ------------------------------------------------------------------
+    # Evaluation mode helpers
+    # ------------------------------------------------------------------
+
+    def _eval_refresh_frame(self):
+        """Populate eval GT objects list for the current frame."""
+        self._eval_gt_objects = []
+        if self.current_frame_id and self._annotations_dir:
+            ann_path = os.path.join(self._annotations_dir, self.current_frame_id + ".json")
+            if os.path.exists(ann_path):
+                try:
+                    with open(ann_path) as f:
+                        doc = json.load(f)
+                    for ann in doc.get("annotations", []):
+                        b = ann.get("bbox_3d", {})
+                        cen  = b.get("center", {})
+                        dims = b.get("dimensions", {})
+                        self._eval_gt_objects.append({
+                            "category_id": ann.get("category_id", 0),
+                            "bbox_3d": {
+                                "center":     {"x": cen.get("x",0), "y": cen.get("y",0), "z": cen.get("z",0)},
+                                "dimensions": {"length": dims.get("length",0), "width": dims.get("width",0), "height": dims.get("height",0)},
+                                "yaw":        b.get("yaw", 0.0),
+                            },
+                        })
+                except Exception:
+                    pass
+        self._eval_populate_obj_list()
+
+    def _eval_populate_obj_list(self):
+        from PyQt5.QtGui import QColor
+        self._eval_obj_list.blockSignals(True)
+        self._eval_obj_list.clear()
+        for i, obj in enumerate(self._eval_gt_objects):
+            cat_name = self._coco_cat_id_to_name.get(obj["category_id"], f"cat{obj['category_id']}")
+            it = QTreeWidgetItem([str(i), cat_name, "GT"])
+            it.setForeground(1, QColor("#9cdcfe"))
+            self._eval_obj_list.addTopLevelItem(it)
+            for mname, preds_by_frame in self._eval_method_results.items():
+                preds = preds_by_frame.get(self.current_frame_id, [])
+                matched = self._eval_best_pred(i, preds)
+                score_str = f"{matched['score']:.2f}" if matched else "—"
+                child = QTreeWidgetItem(["", f"  ↳ {mname[:18]}", score_str])
+                child.setForeground(1, QColor("#888"))
+                it.addChild(child)
+        self._eval_obj_list.expandAll()
+        # Auto-select first GT object
+        if self._eval_obj_list.topLevelItemCount() > 0:
+            self._eval_obj_list.setCurrentItem(self._eval_obj_list.topLevelItem(0))
+        self._eval_obj_list.blockSignals(False)
+        self._eval_refresh_comparison()
+
+    def _adjust_dim_table_height(self):
+        """Set the comparison table to exactly fit its rows — called once after fonts are ready."""
+        if not hasattr(self, '_eval_cmp_table'):
+            return
+        h = self._eval_cmp_table.horizontalHeader().height()
+        for r in range(self._eval_cmp_table.rowCount()):
+            h += self._eval_cmp_table.rowHeight(r)
+        h += 2  # border
+        self._eval_cmp_table.setFixedHeight(h)
+
+    def _eval_best_pred(self, gt_idx: int, preds: list) -> dict | None:
+        from eval_window import iou_3d
+        if gt_idx >= len(self._eval_gt_objects):
+            return None
+        gt = self._eval_gt_objects[gt_idx]
+        thresh = self._eval_iou_spin.value()
+        best, best_iou = None, 0.0
+        for p in preds:
+            if p.get("category_id") != gt["category_id"]:
+                continue
+            iou = iou_3d(p["bbox_3d"], gt["bbox_3d"])
+            if iou > best_iou:
+                best_iou, best = iou, p
+        return best if best_iou >= thresh else None
+
+    def _eval_refresh_comparison(self):
+        import math
+        from eval_window import iou_3d
+
+        def _cell(txt, fg=None, is_var=False):
+            it = QTableWidgetItem(txt)
+            it.setTextAlignment(Qt.AlignCenter)
+            it.setFlags(Qt.ItemIsEnabled)
+            if is_var:
+                it.setBackground(QColor("#2a2a2a"))
+                it.setForeground(QColor("#888888"))
+            elif fg:
+                it.setForeground(QColor(fg))
+            return it
+
+        def _ensure_cols(n_data_cols):
+            """Ensure table has Variable + n_data_cols columns, refilling Variable column."""
+            n_total = 1 + n_data_cols
+            if self._eval_cmp_table.columnCount() != n_total:
+                self._eval_cmp_table.setColumnCount(n_total)
+                _ch = self._eval_cmp_table.horizontalHeader()
+                _ch.setSectionResizeMode(0, QHeaderView.Fixed)
+                _ch.resizeSection(0, 72)
+                for c in range(1, n_total):
+                    _ch.setSectionResizeMode(c, QHeaderView.Stretch)
+                for r, name in enumerate(self._eval_cmp_row_labels):
+                    self._eval_cmp_table.setItem(r, 0, _cell(name, is_var=True))
+
+        item = self._eval_obj_list.currentItem()
+        methods_with_data = [m for m in self._eval_method_results
+                             if self.current_frame_id in self._eval_method_results[m]]
+        n_methods = max(2, len(methods_with_data))
+        _ensure_cols(1 + n_methods)  # GT + methods
+
+        method_headers = methods_with_data + [f"Method {i+1}" for i in range(len(methods_with_data), n_methods)]
+        self._eval_cmp_table.setHorizontalHeaderLabels(["Variable", "GT"] + method_headers)
+
+        # Clear data columns
+        for r in range(len(self._eval_cmp_row_labels)):
+            for c in range(1, self._eval_cmp_table.columnCount()):
+                self._eval_cmp_table.setItem(r, c, _cell(""))
+
+        if item is None or item.parent() is not None:
+            return
+        gt_idx = int(item.text(0)) if item.text(0).isdigit() else -1
+        if gt_idx < 0 or gt_idx >= len(self._eval_gt_objects):
+            return
+
+        gt = self._eval_gt_objects[gt_idx]
+        gc = gt["bbox_3d"]["center"]
+        gd = gt["bbox_3d"]["dimensions"]
+        gy = gt["bbox_3d"].get("yaw", 0.0)
+        # Order: X, Y, Z, Length, Width, Height, Yaw, IoU
+        gt_vals = [gc.get("x",0), gc.get("y",0), gc.get("z",0),
+                   gd.get("length",0), gd.get("width",0), gd.get("height",0),
+                   math.degrees(gy), None]
+        for r, v in enumerate(gt_vals):
+            self._eval_cmp_table.setItem(r, 1, _cell(f"{v:.3f}" if v is not None else "—"))
+
+        iou_thresh = self._eval_iou_spin.value()
+        for ci, mname in enumerate(methods_with_data):
+            p = self._eval_best_pred(gt_idx,
+                    self._eval_method_results[mname].get(self.current_frame_id, []))
+            if p:
+                pc = p["bbox_3d"]["center"]; pd_ = p["bbox_3d"]["dimensions"]
+                py = p["bbox_3d"].get("yaw", 0.0)
+                iou_v = iou_3d(p["bbox_3d"], gt["bbox_3d"])
+                pred_vals = [pc.get("x",0), pc.get("y",0), pc.get("z",0),
+                             pd_.get("length",0), pd_.get("width",0), pd_.get("height",0),
+                             math.degrees(py), iou_v]
+            else:
+                pred_vals = [None] * 8
+            for r, v in enumerate(pred_vals):
+                fg = None
+                if r == 7 and v is not None:
+                    fg = "#4ec94e" if v >= iou_thresh else "#e05252"
+                self._eval_cmp_table.setItem(r, ci + 2, _cell(
+                    f"{v:.3f}" if v is not None else "—", fg))
+
+    def _adjust_metrics_table_height(self):
+        if not hasattr(self, '_eval_metrics_table'):
+            return
+        h = self._eval_metrics_table.horizontalHeader().height()
+        for r in range(self._eval_metrics_table.rowCount()):
+            h += self._eval_metrics_table.rowHeight(r)
+        h += 2
+        self._eval_metrics_table.setFixedHeight(h)
+
+    def _eval_refresh_metrics_table(self):
+        import math
+
+        def _mcell(txt):
+            it = QTableWidgetItem(txt)
+            it.setFlags(Qt.ItemIsEnabled)
+            it.setTextAlignment(Qt.AlignCenter)
+            return it
+
+        n_methods = max(2, len(self._eval_method_metrics))
+        n_total = 2 + n_methods  # Variable + GT + methods
+        if self._eval_metrics_table.columnCount() != n_total:
+            self._eval_metrics_table.setColumnCount(n_total)
+            _mhdr = self._eval_metrics_table.horizontalHeader()
+            _mhdr.setSectionResizeMode(0, QHeaderView.Fixed)
+            _mhdr.resizeSection(0, 72)
+            for c in range(1, n_total):
+                _mhdr.setSectionResizeMode(c, QHeaderView.Stretch)
+
+        method_names = list(self._eval_method_metrics.keys())
+        placeholders = [f"Method {i+1}" for i in range(len(method_names), n_methods)]
+        self._eval_metrics_table.setHorizontalHeaderLabels(
+            ["Variable", "GT"] + method_names + placeholders)
+
+        # Clear method columns
+        for r in range(len(self._eval_metrics_row_labels)):
+            for c in range(2, n_total):
+                self._eval_metrics_table.setItem(r, c, _mcell("—"))
+
+        # Fill each method column; set description as tooltip on the column header
+        hdr = self._eval_metrics_table.horizontalHeader()
+        for ci, (mname, m) in enumerate(self._eval_method_metrics.items()):
+            desc = m.get("description", "")
+            tip  = f"{mname}" + (f"\n{desc}" if desc else "")
+            hi   = QTableWidgetItem(mname)
+            hi.setToolTip(tip)
+            self._eval_metrics_table.setHorizontalHeaderItem(ci + 2, hi)
+
+            ap_vals   = [v for v in m.get("ap",    {}).values() if not math.isnan(v)]
+            ap25_vals = [v for v in m.get("ap_25", {}).values() if not math.isnan(v)]
+            cat_aps   = [v for v in m.get("ap",    {}).values() if not math.isnan(v)]
+            ate_v = m.get("ate", float("nan"))
+            aoe_v = m.get("aoe", float("nan"))
+            fps_v  = m.get("fps", float("nan"))
+            timing = m.get("timing", {})
+            vals = [
+                f"{np.mean(ap_vals):.3f}"   if ap_vals   else "—",
+                f"{np.mean(ap25_vals):.3f}" if ap25_vals else "—",
+                f"{np.mean(cat_aps):.3f}"   if cat_aps   else "—",
+                f"{ate_v:.3f}" if not math.isnan(ate_v) else "—",
+                f"{aoe_v:.3f}" if not math.isnan(aoe_v) else "—",
+                f"{fps_v:.1f}" if not math.isnan(fps_v) else "—",
+            ]
+            for r, v in enumerate(vals):
+                cell = _mcell(v)
+                # Attach timing tooltip to the FPS row
+                if r == self._eval_metrics_row_labels.index("FPS") and timing:
+                    yolo_s = timing.get("yolo_s")
+                    hdf_s  = timing.get("hdf_s")
+                    pose_s = timing.get("pose_s")
+                    lines = ["Timing breakdown:"]
+                    if yolo_s is not None:
+                        lines.append(f"  YOLO inference:  {yolo_s:.2f} s")
+                    if hdf_s is not None:
+                        lines.append(f"  HDF:             {hdf_s:.2f} s")
+                    if pose_s is not None:
+                        lines.append(f"  Pose estimation: {pose_s:.2f} s")
+                    total = (yolo_s or 0) + (hdf_s or 0) + (pose_s or 0)
+                    if total > 0:
+                        lines.append(f"  Pipeline total:  {total:.2f} s")
+                    cell.setToolTip("\n".join(lines))
+                self._eval_metrics_table.setItem(r, ci + 2, cell)
+
+    def _eval_on_run_method(self):
+        from eval_window import discover_methods, MethodRunWorker
+        if self._eval_run_worker and self._eval_run_worker.isRunning():
+            QMessageBox.information(self, "Busy", "A method is already running.")
+            return
+
+        annotator_dir = os.path.dirname(os.path.abspath(__file__))
+        methods = discover_methods(annotator_dir)
+        all_frames = getattr(self, '_all_frame_files', [])
+
+        # ── Dialog ────────────────────────────────────────────────────
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Select Method")
+        dlg.setMinimumWidth(420)
+        dlg_lay = QVBoxLayout(dlg)
+        dlg_lay.setSpacing(8)
+
+        # ── Run section ───────────────────────────────────────────────
+        run_group = QGroupBox("Run a method")
+        run_lay = QVBoxLayout(run_group)
+        run_lay.setSpacing(6)
+
+        if len(methods) > 1:
+            method_combo = QComboBox()
+            for m in methods:
+                method_combo.addItem(m.get("name", m["_dir"]))
+            run_lay.addWidget(method_combo)
+        else:
+            method_combo = None
+            method_lbl = QLabel(methods[0].get("name", methods[0]["_dir"]) if methods else "No methods found")
+            method_lbl.setStyleSheet("font-weight: bold;")
+            run_lay.addWidget(method_lbl)
+
+        # Frame scope
+        scope_grp  = QButtonGroup(dlg)
+        rb_checked = QRadioButton("Checked frames in file list")
+        rb_verified= QRadioButton("Verified frames only")
+        rb_all     = QRadioButton("All loaded frames")
+        scope_grp.addButton(rb_checked,  0)
+        scope_grp.addButton(rb_verified, 1)
+        scope_grp.addButton(rb_all,      2)
+        rb_verified.setChecked(True)
+        for rb in (rb_checked, rb_verified, rb_all):
+            run_lay.addWidget(rb)
+
+        # Annotator filter
+        annotators = sorted({
+            self._frame_meta(os.path.splitext(f)[0]).get("annotated_by", "")
+            for f in all_frames
+        } - {""})
+        ann_row = QHBoxLayout()
+        ann_row.addWidget(QLabel("Annotator:"))
+        ann_combo = QComboBox()
+        ann_combo.addItem("All annotators")
+        ann_combo.addItems(annotators)
+        ann_row.addWidget(ann_combo, stretch=1)
+        run_lay.addLayout(ann_row)
+
+        run_btn = QPushButton("▶  Next: Configure parameters…")
+        run_btn.setEnabled(bool(methods))
+        run_lay.addWidget(run_btn)
+        dlg_lay.addWidget(run_group)
+
+        # ── Load section ──────────────────────────────────────────────
+        load_group = QGroupBox("Load results from file")
+        load_lay = QVBoxLayout(load_group)
+        load_lay.setSpacing(4)
+
+        fmt_lbl = QLabel(
+            'The results file must be a JSON with a top-level "fps" (float) field and a '
+            '"predictions" dict mapping frame IDs to lists of COCO-like detections. '
+            'Download the example file to see the exact format.'
+        )
+        fmt_lbl.setStyleSheet("color:#888; font-size:11px;")
+        fmt_lbl.setWordWrap(True)
+        load_lay.addWidget(fmt_lbl)
+
+        _EXAMPLE_JSON = {
+            "fps": 12.5,
+            "predictions": {
+                "010001": [
+                    {
+                        "category_id": 3,
+                        "score": 0.90,
+                        "bbox_3d": {
+                            "center": {"x": 1.2, "y": 0.0, "z": 2.5},
+                            "dimensions": {"length": 1.2, "width": 0.8, "height": 0.144},
+                            "yaw": 0.78,
+                        },
+                    }
+                ]
+            },
+        }
+
+        def _download_example():
+            p, _ = QFileDialog.getSaveFileName(
+                dlg, "Save example JSON", "example_results.json", "JSON files (*.json)"
+            )
+            if p:
+                with open(p, "w") as f:
+                    json.dump(_EXAMPLE_JSON, f, indent=2)
+
+        load_file_path = [""]
+        load_path_lbl = QLabel("No file selected")
+        load_path_lbl.setStyleSheet("color:#888; font-size:11px;")
+
+        def _browse():
+            p, _ = QFileDialog.getOpenFileName(dlg, "Load results", "", "JSON files (*.json)")
+            if p:
+                load_file_path[0] = p
+                load_path_lbl.setText(os.path.basename(p))
+                load_path_lbl.setStyleSheet("color:#d4d4d4; font-size:11px;")
+                if not load_name_edit.text().strip():
+                    load_name_edit.setText(os.path.splitext(os.path.basename(p))[0])
+
+        btn_row = QHBoxLayout()
+        dl_btn = QPushButton(_icon("download"), "Download example")
+        dl_btn.clicked.connect(_download_example)
+        dl_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        btn_row.addWidget(dl_btn, stretch=1)
+        browse_btn = QPushButton(_icon("browse"), "Browse JSON file…")
+        browse_btn.clicked.connect(_browse)
+        browse_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        btn_row.addWidget(browse_btn, stretch=1)
+        load_lay.addLayout(btn_row)
+        load_lay.addWidget(load_path_lbl)
+
+        load_name_edit = QLineEdit()
+        load_name_edit.setPlaceholderText("Method name…")
+        load_lay.addWidget(load_name_edit)
+
+        load_btn_row = QHBoxLayout()
+        load_btn = QPushButton(_icon("load"), "Load")
+        load_btn_row.addStretch()
+        load_btn_row.addWidget(load_btn)
+        load_lay.addLayout(load_btn_row)
+        dlg_lay.addWidget(load_group)
+
+        cancel_btn = QPushButton("Cancel")
+        dlg_lay.addWidget(cancel_btn)
+
+        def _do_run():   dlg.done(1)
+        def _do_load():  dlg.done(2)
+        def _do_cancel(): dlg.reject()
+
+        run_btn.clicked.connect(_do_run)
+        load_btn.clicked.connect(_do_load)
+        cancel_btn.clicked.connect(_do_cancel)
+
+        result = dlg.exec_()
+        if result == 0:
+            return
+
+        # ── Load mode ─────────────────────────────────────────────────
+        if result == 2:
+            if not load_file_path[0]:
+                QMessageBox.warning(self, "No file", "Browse a JSON file first.")
+                return
+            name = load_name_edit.text().strip() or \
+                   os.path.splitext(os.path.basename(load_file_path[0]))[0]
+            try:
+                with open(load_file_path[0]) as f:
+                    raw = json.load(f)
+            except Exception as e:
+                QMessageBox.critical(self, "Load error", str(e))
+                return
+            if isinstance(raw, dict) and "predictions" in raw:
+                predictions = raw["predictions"]
+                fps = float(raw.get("fps", float("nan")))
+            else:
+                QMessageBox.warning(
+                    self, "Invalid format",
+                    'JSON must have a top-level "fps" field and a "predictions" dict. '
+                    'Download the example file to see the required format.'
+                )
+                return
+            self._eval_method_results[name] = predictions
+            self._eval_method_metrics[name] = {"fps": fps}
+            self._eval_refresh_metrics_table()
+            self._eval_populate_obj_list()
+            self._render_scene()
+            self._eval_status_lbl.setText(f"Loaded {name} ({len(predictions)} frames)")
+            return
+
+        # ── Run mode — resolve frame list ──────────────────────────────
+        if not methods:
+            QMessageBox.warning(self, "No methods",
+                                "No method.json files found in annotator/methods/.")
+            return
+        method = methods[method_combo.currentIndex() if method_combo else 0]
+
+        # Resolve frame scope
+        if rb_checked.isChecked():
+            checked = self.get_checked_frame_ids()
+            frame_ids = checked if checked else ([self.current_frame_id] if self.current_frame_id else [])
+        elif rb_verified.isChecked():
+            frame_ids = [
+                os.path.splitext(f)[0] for f in self._all_frame_files
+                if self._frame_meta(os.path.splitext(f)[0]).get("verified_by")
+            ]
+        else:
+            frame_ids = [os.path.splitext(f)[0] for f in self._all_frame_files]
+
+        # Annotator filter
+        selected_ann = ann_combo.currentText()
+        if selected_ann != "All annotators":
+            frame_ids = [
+                fid for fid in frame_ids
+                if self._frame_meta(fid).get("annotated_by", "") == selected_ann
+            ]
+
+        if not frame_ids:
+            QMessageBox.warning(self, "No frames", "No frames match the selected scope.")
+            return
+
+        # ── Interactive parameter config (SHADE / AutoBBoxValidationDialog) ──
+        run_params = {}
+        from pose_estimation_pipeline import (
+            find_depth_file, load_depth_file, find_camera_params_file,
+            load_intrinsics, align_depth_to_color,
+        )
+        from auto_bbox_dialog import AutoBBoxValidationDialog
+
+        frame_paths = []
+        for fid in frame_ids:
+            r = _find_rgb_image(self.rgb_dir, fid) if self.rgb_dir else None
+            d = find_depth_file(self.depth_dir, fid) if self.depth_dir else None
+            p = find_camera_params_file(self.camera_params_dir, fid) if self.camera_params_dir else None
+            frame_paths.append((fid, r, d, p))
+
+        def _load_frame(idx):
+            fid, r_path, d_path, p_path = frame_paths[idx]
+            rgb = np.array(_PIL_Image.open(r_path).convert("RGB")) if r_path else np.zeros((480, 640, 3), dtype=np.uint8)
+            if d_path:
+                depth_raw = load_depth_file(d_path)
+                if p_path and p_path.lower().endswith(".json"):
+                    depth, fx_i, fy_i, cx_i, cy_i = align_depth_to_color(depth_raw, p_path)
+                else:
+                    depth = depth_raw
+                    fx_i, fy_i, cx_i, cy_i = load_intrinsics(p_path) if p_path else (644.145, 644.145, 640., 360.)
+            else:
+                depth = np.zeros((480, 640), dtype=np.float32)
+                fx_i, fy_i, cx_i, cy_i = (644.145, 644.145, 640., 360.)
+            return rgb, depth, fx_i, fy_i, cx_i, cy_i
+
+        cfg_dlg = AutoBBoxValidationDialog(
+            _load_frame, len(frame_ids),
+            default_yolo_path=YOLO_MODEL_PATH, parent=self
+        )
+        cfg_dlg.setStyleSheet(self.styleSheet())
+        if cfg_dlg.exec_() != QDialog.Accepted or cfg_dlg.result is None:
+            return
+
+        hdf = cfg_dlg._hdf_params
+        run_params = {
+            "confidence":         cfg_dlg.conf_threshold,
+            "resolution":         hdf.get("resolution", 1),
+            "max_height_percent": hdf.get("max_height_percent", 5.0),
+        }
+
+        frames_payload = []
+        for fid in frame_ids:
+            pcd_path = None
+            for ext in (".pcd", ".ply"):
+                p = os.path.join(self.pcd_dir or "", fid + ext)
+                if os.path.exists(p):
+                    pcd_path = p
+                    break
+            img_path = None
+            for ext in (".png", ".jpg", ".jpeg"):
+                p = os.path.join(self.rgb_dir or "", fid + ext)
+                if os.path.exists(p):
+                    img_path = p
+                    break
+            frames_payload.append({
+                "frame_id":     fid,
+                "pcd_path":     pcd_path or "",
+                "image_path":   img_path  or "",
+                "dataset_root": self._dataset_root or "",
+            })
+
+        self._eval_progress.setVisible(True)
+        self._eval_run_btn.setEnabled(False)
+        self._eval_status_lbl.setText(f"Running {method['name']} on {len(frames_payload)} frames…")
+        self._eval_run_worker = MethodRunWorker(
+            method, frames_payload, params=run_params, parent=self)
+        self._eval_run_worker.done.connect(self._eval_on_method_done)
+        self._eval_run_worker.error.connect(self._eval_on_method_error)
+        self._eval_run_worker.start()
+
+    def _eval_on_method_done(self, method_name: str, predictions: dict,
+                              elapsed: float, timing: dict):
+        import math
+        from eval_window import compute_metrics
+        self._eval_progress.setVisible(False)
+        self._eval_run_btn.setEnabled(True)
+        fps = len(predictions) / elapsed if elapsed > 0 else 0.0
+        n_dets = sum(len(v) for v in predictions.values())
+        self._eval_method_results[method_name] = predictions
+
+        gt_all = {}
+        for fid in predictions:
+            ann_path = os.path.join(self._annotations_dir or "", fid + ".json")
+            if not os.path.exists(ann_path):
+                continue
+            try:
+                with open(ann_path) as f:
+                    doc = json.load(f)
+                gt_all[fid] = []
+                for ann in doc.get("annotations", []):
+                    b = ann.get("bbox_3d", {})
+                    gt_all[fid].append({
+                        "category_id": ann.get("category_id", 0),
+                        "bbox_3d": {
+                            "center":     b.get("center", {}),
+                            "dimensions": b.get("dimensions", {}),
+                            "yaw":        b.get("yaw", 0.0),
+                        },
+                    })
+            except Exception:
+                pass
+
+        all_cats = list({obj["category_id"] for gts in gt_all.values() for obj in gts})
+        metrics = compute_metrics(gt_all, predictions, all_cats, self._eval_iou_spin.value())
+        metrics["fps"] = fps
+        metrics["timing"] = timing
+        self._eval_method_metrics[method_name] = metrics
+        self._eval_refresh_metrics_table()
+        self._eval_status_lbl.setText(
+            f"{method_name}: done in {elapsed:.1f}s ({fps:.1f} FPS, {n_dets} detections)"
+        )
+        self._eval_populate_obj_list()
+        self._render_scene()
+
+    def _eval_on_method_error(self, method_name: str, error: str):
+        self._eval_progress.setVisible(False)
+        self._eval_run_btn.setEnabled(True)
+        self._eval_status_lbl.setText(f"Error running {method_name}")
+        QMessageBox.critical(self, f"Method error — {method_name}", error[-3000:])
+
+    def _eval_metrics_context_menu(self, pos):
+        tbl = self._eval_metrics_table
+        row = tbl.rowAt(pos.y())
+        col = tbl.columnAt(pos.x())
+        fps_row = self._eval_metrics_row_labels.index("FPS")
+        if row != fps_row or col < 2:
+            return
+        # col 2+ maps to method index col-2
+        method_names = list(self._eval_method_metrics.keys())
+        method_idx = col - 2
+        if method_idx >= len(method_names):
+            return
+        mname = method_names[method_idx]
+        timing = self._eval_method_metrics[mname].get("timing", {})
+        if not timing:
+            return
+        yolo_s = timing.get("yolo_s", None)
+        hdf_s  = timing.get("hdf_s",  None)
+        pose_s = timing.get("pose_s", None)
+
+        menu = QMenu(self)
+        menu.setTitle(f"Timing — {mname}")
+        def _act(label):
+            a = menu.addAction(label)
+            a.setEnabled(False)
+            return a
+        if yolo_s is not None:
+            _act(f"YOLO inference:  {yolo_s:.2f} s")
+        if hdf_s is not None:
+            _act(f"HDF:             {hdf_s:.2f} s")
+        if pose_s is not None:
+            _act(f"Pose estimation: {pose_s:.2f} s")
+        total_pipeline = (yolo_s or 0) + (hdf_s or 0) + (pose_s or 0)
+        if total_pipeline > 0:
+            menu.addSeparator()
+            _act(f"Pipeline total:  {total_pipeline:.2f} s")
+        menu.exec_(tbl.viewport().mapToGlobal(pos))
+
     # ------------------------------------------------------------------
     # Project loading
     # ------------------------------------------------------------------
@@ -2222,6 +3165,7 @@ class LabelEditorWindow(QMainWindow):
         self._remove_frame_btn.setEnabled(False)
         self._manage_users_btn.setEnabled(True)   # always available so users can be set up
         self._eval_btn.setEnabled(bool(root))
+        self._eval_run_btn.setEnabled(bool(root))
         if root:
             users = _load_project_users(root)
             if users:
@@ -2839,6 +3783,8 @@ class LabelEditorWindow(QMainWindow):
         self._load_current_intrinsics(frame_id)
         self._load_rgb_image(frame_id)
         self._update_status(f"{frame_id} — {len(self.current_objects)} object(s)")
+        if self._eval_mode:
+            self._eval_refresh_frame()
 
     def _rebuild_object_panel(self):
         self._block_manual_tracking = True
@@ -2890,7 +3836,6 @@ class LabelEditorWindow(QMainWindow):
 
     def _on_obj_list_context_menu(self, pos):
         """Right-click menu on the object list: Copy/Paste pose and/or dimensions."""
-        from PyQt5.QtWidgets import QMenu
         item = self.object_list.itemAt(pos)
         if item is None:
             return
@@ -3056,6 +4001,23 @@ class LabelEditorWindow(QMainWindow):
             else:
                 lw, op, draw_color = 2, 0.3, color
             self.plotter.add_mesh(mesh, color=draw_color, line_width=lw, opacity=op)
+
+        # Eval mode: draw method predictions as dashed wireframe boxes
+        if getattr(self, '_eval_mode', False):
+            for mi, (mname, preds_by_frame) in enumerate(
+                    getattr(self, '_eval_method_results', {}).items()):
+                frame_preds = preds_by_frame.get(self.current_frame_id, [])
+                color = _METHOD_COLORS[mi % len(_METHOD_COLORS)]
+                for pred in frame_preds:
+                    try:
+                        mesh = _pred_bbox_to_pv_mesh(pred)
+                        actor = self.plotter.add_mesh(
+                            mesh, color=color, line_width=2, opacity=0.9)
+                        prop = actor.GetProperty()
+                        prop.SetLineStipplePattern(0xF0F0)
+                        prop.SetLineStippleRepeatFactor(1)
+                    except Exception:
+                        pass
 
         self.plotter.add_axes()
         if do_reset:
@@ -3979,27 +4941,35 @@ class LabelEditorWindow(QMainWindow):
                 if current_rec:
                     self._current_user["role"] = current_rec["role"]
 
-    def _on_open_eval(self):
-        from eval_window import EvalWindow
-        if not self._dataset_root:
-            QMessageBox.warning(self, "No project", "Load a project first.")
-            return
-        annotator_dir = os.path.dirname(os.path.abspath(__file__))
-        win = EvalWindow(
-            dataset_root      = self._dataset_root,
-            pcd_dir           = self.pcd_dir or "",
-            img_dir           = self.rgb_dir or "",
-            ann_dir           = self._annotations_dir or "",
-            all_frame_files   = list(self._all_frame_files),
-            current_user      = self._current_user,
-            coco_cat_id_to_name = dict(self._coco_cat_id_to_name),
-            dataset_axes      = self._dataset_axes,
-            style_sheet       = self.styleSheet(),
-            annotator_dir     = annotator_dir,
-            parent            = None,
-        )
-        win.show()
-        self._eval_window = win  # keep reference
+    def _on_toggle_eval_mode(self):
+        sizes = self._main_splitter.sizes()
+        if self._eval_mode:
+            # Switch back to labelling
+            self._eval_mode = False
+            self._right_stack.setCurrentIndex(0)
+            self._labelling_btns_w.setVisible(True)
+            self._eval_btn.setText("📊 Evaluation")
+            self._eval_btn.setStyleSheet(
+                "QPushButton { background:#1a7a30; color:#fff; border:1px solid #2a9a40; border-radius:4px; }"
+                "QPushButton:hover { background:#22963a; }"
+                "QPushButton:pressed { background:#155f24; }"
+                "QPushButton:disabled { background:#2a2a2a; color:#666; border-color:#444; }"
+            )
+        else:
+            # Switch to evaluation
+            self._eval_mode = True
+            self._right_stack.setCurrentIndex(1)
+            self._labelling_btns_w.setVisible(False)
+            self._eval_btn.setText("🏷 Labelling")
+            self._eval_btn.setStyleSheet(
+                "QPushButton { background:#0e639c; color:#fff; border:1px solid #1177bb; border-radius:4px; }"
+                "QPushButton:hover { background:#1177bb; }"
+                "QPushButton:pressed { background:#0a4f7e; }"
+            )
+        right_w = sizes[2] if len(sizes) > 2 else 350
+        total = sum(sizes)
+        self._main_splitter.setSizes([sizes[0], total - sizes[0] - right_w, right_w])
+        self._eval_refresh_frame()
 
     def _on_flag_frame(self):
         if self.current_frame_id is None:
@@ -4204,14 +5174,11 @@ class LabelEditorWindow(QMainWindow):
         vbox.setSpacing(8)
         vbox.setContentsMargins(12, 12, 12, 12)
 
-        checklist = _ReviewChecklistDialog(review, is_admin=is_admin, parent=dlg)
+        checklist = _ReviewChecklistDialog(review, is_admin=is_admin, parent=dlg,
+                                           show_buttons=False)
         checklist.setWindowFlags(Qt.Widget)
         checklist.setModal(False)
-        # Embed the inner layout of the checklist dialog into this wrapper
-        inner_layout = checklist.layout()
-        inner_widget = QWidget()
-        inner_widget.setLayout(inner_layout)
-        vbox.addWidget(inner_widget, stretch=1)
+        vbox.addWidget(checklist, stretch=1)
 
         btn_row = QHBoxLayout()
         add_gen_btn = QPushButton("+ Add general comment")
@@ -4559,9 +5526,18 @@ class LabelEditorWindow(QMainWindow):
     # Image click → select matching object
     # ------------------------------------------------------------------
     def eventFilter(self, obj, event):
-        if obj is self._image_label and event.type() == QEvent.Resize:
+        # Pointer cursor over the review icon column in the file list
+        if obj is self.file_list.viewport() and event.type() == QEvent.MouseMove:
+            item = self.file_list.itemAt(event.pos())
+            col  = self.file_list.columnAt(event.pos().x())
+            if item is not None and col == 2 and "📝" in (item.text(2) or ""):
+                self.file_list.viewport().setCursor(Qt.PointingHandCursor)
+            else:
+                self.file_list.viewport().unsetCursor()
+        _img = getattr(self, '_image_label', None)
+        if _img is not None and obj is _img and event.type() == QEvent.Resize:
             self._refresh_image_pixmap()
-        if obj is self._image_label and event.type() == QEvent.MouseButtonPress:
+        if _img is not None and obj is _img and event.type() == QEvent.MouseButtonPress:
             if event.button() == Qt.LeftButton:
                 ctrl = bool(event.modifiers() & Qt.ControlModifier)
                 if ctrl:
@@ -4571,7 +5547,8 @@ class LabelEditorWindow(QMainWindow):
             elif event.button() == Qt.RightButton:
                 self._on_image_right_click(event.pos())
                 return True
-        if obj is self.object_list.viewport() and event.type() == QEvent.MouseButtonPress:
+        _obj_list = getattr(self, 'object_list', None)
+        if _obj_list is not None and obj is _obj_list.viewport() and event.type() == QEvent.MouseButtonPress:
             if event.button() == Qt.LeftButton and (event.modifiers() & Qt.ControlModifier):
                 item = self.object_list.itemAt(event.pos())
                 if item is not None:
@@ -4729,7 +5706,6 @@ class LabelEditorWindow(QMainWindow):
 
     def _on_image_right_click(self, pos):
         """Right-click on the RGB preview: select the mask under the cursor, then show Copy/Paste menu."""
-        from PyQt5.QtWidgets import QMenu
         if (self._orig_pixmap is None or self._orig_pixmap.isNull()
                 or not self.current_frame_id):
             return

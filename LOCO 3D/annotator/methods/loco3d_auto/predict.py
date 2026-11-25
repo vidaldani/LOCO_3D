@@ -47,6 +47,7 @@ from pose_estimation_pipeline import (
     load_depth_file,
     find_camera_params_file,
     load_intrinsics,
+    align_depth_to_color,
     make_label_object,
 )
 
@@ -71,8 +72,16 @@ _NAME_TO_CAT = {
 _MODEL_PATH = os.path.join(_ANNOTATOR_DIR, "models", "best.pt")
 
 
-def _run_frame(frame_info: dict, model) -> list[dict]:
-    """Run the pipeline on one frame and return a list of predictions."""
+def _run_frame(frame_info: dict, model,
+               confidence: float = 0.5,
+               resolution: int = 1,
+               max_height_percent: float = 5.0,
+               timing: dict = None) -> list[dict]:
+    """Run the pipeline on one frame and return a list of predictions.
+
+    If *timing* dict is supplied, accumulated seconds are added to keys
+    'yolo_s' and 'pose_s' (depth filtering + orientation estimation).
+    """
     dataset_root = frame_info["dataset_root"]
     frame_id     = frame_info["frame_id"]
     image_path   = frame_info.get("image_path", "")
@@ -86,14 +95,22 @@ def _run_frame(frame_info: dict, model) -> list[dict]:
         return []
 
     depth_raw = load_depth_file(depth_path)   # uint16 mm
-    depth_m   = depth_raw.astype(np.float32) / 1000.0
 
-    fx, fy, cx_cam, cy_cam = load_intrinsics(calib_path)
+    # Align depth to color image space when calib is JSON (e.g. Kinect V2)
+    # — depth and color have different resolutions and must be reprojected.
+    if calib_path.lower().endswith(".json"):
+        depth_aligned, fx, fy, cx_cam, cy_cam = align_depth_to_color(depth_raw, calib_path)
+    else:
+        depth_aligned = depth_raw
+        fx, fy, cx_cam, cy_cam = load_intrinsics(calib_path)
     img_bgr = cv2.imread(image_path)
     if img_bgr is None:
         return []
 
-    results_yolo = model(image_path, verbose=False)
+    _t0 = time.time()
+    results_yolo = model(image_path, verbose=False, conf=confidence)
+    if timing is not None:
+        timing["yolo_s"] = timing.get("yolo_s", 0.0) + (time.time() - _t0)
     if not results_yolo or results_yolo[0].masks is None:
         return []
 
@@ -103,22 +120,47 @@ def _run_frame(frame_info: dict, model) -> list[dict]:
         cls_name = det.names[int(det.boxes.cls[i].item())]
         score    = float(det.boxes.conf[i].item())
         x1, y1, x2, y2 = (int(v) for v in det.boxes.xyxy[i].tolist())
-        mask_full = det.masks.data[i].cpu().numpy()  # 0/1 float, model resolution
-        # Resize mask to image size
+        mask_full = det.masks.data[i].cpu().numpy()
         mask_img = cv2.resize(mask_full, (img_bgr.shape[1], img_bgr.shape[0]),
                               interpolation=cv2.INTER_NEAREST)
-        mask_crop = mask_img[y1:y2, x1:x2].astype(bool)
-        depth_crop = depth_m[y1:y2, x1:x2]
+        mask_bool  = mask_img[y1:y2, x1:x2].astype(bool)
+        depth_crop = depth_aligned[y1:y2, x1:x2]        # mm uint16, aligned to color
+        dep_masked = np.where(mask_bool, depth_crop, 0) # zero out non-object pixels
+
+        # HDF timing
+        _t0 = time.time()
+        try:
+            filtered_depth, *_ = apply_hist_depth_filter(
+                dep_masked, resolution=resolution,
+                max_height_percent=max_height_percent,
+            )
+        except Exception as e:
+            print(f"WARN: HDF failed on {frame_id} det {i}: {e}", file=sys.stderr)
+            filtered_depth = dep_masked
+        finally:
+            if timing is not None:
+                timing["hdf_s"] = timing.get("hdf_s", 0.0) + (time.time() - _t0)
+
+        mask_crop = (filtered_depth > 0).astype(np.uint8)
+        if mask_crop.sum() == 0:
+            print(f"WARN: no depth points after HDF on {frame_id} det {i}", file=sys.stderr)
+            continue
+
+        # Pose timing
+        _t0 = time.time()
         try:
             result = estimate_3d_pose(
-                depth_crop, mask_crop, x1, y1, fx, fy, cx_cam, cy_cam,
-                resolution=1, max_height_percent=5,
+                filtered_depth, mask_crop, x1, y1, fx, fy, cx_cam, cy_cam,
             )
-        except Exception:
-            continue
+        except Exception as e:
+            print(f"WARN: estimate_3d_pose failed on {frame_id} det {i}: {e}", file=sys.stderr)
+            result = None
+        finally:
+            if timing is not None:
+                timing["pose_s"] = timing.get("pose_s", 0.0) + (time.time() - _t0)
         if result is None:
             continue
-        center, dims, yaw_deg = result
+        _distance, center, dims, yaw_deg, _bbox = result
         obj = make_label_object(cls_name, center, dims, yaw_deg)
         cat_id = _NAME_TO_CAT.get(cls_name, 0)
         preds.append({
@@ -151,19 +193,35 @@ def main():
         sys.exit(1)
 
     model = YOLO(_MODEL_PATH)
+    # Warm up: one dummy call so GPU initialisation and weight transfer don't
+    # pollute the per-frame inference timing that follows.
+    _dummy = np.zeros((64, 64, 3), dtype=np.uint8)
+    model(_dummy, verbose=False)
 
+    params = payload.get("params", {})
+    confidence         = float(params.get("confidence", 0.5))
+    resolution         = int(params.get("resolution", 1))
+    max_height_percent = float(params.get("max_height_percent", 5.0))
+
+    t_start = time.time()   # start AFTER warmup
+    timing: dict = {}
     output = {}
     for frame_info in payload["frames"]:
         frame_id = frame_info["frame_id"]
         try:
-            preds = _run_frame(frame_info, model)
+            preds = _run_frame(frame_info, model,
+                               confidence=confidence,
+                               resolution=resolution,
+                               max_height_percent=max_height_percent,
+                               timing=timing)
         except Exception as e:
             print(f"WARN: frame {frame_id} failed: {e}", file=sys.stderr)
             preds = []
         output[frame_id] = preds
 
+    result = {"_timing": timing, "_elapsed": time.time() - t_start, "predictions": output}
     with open(args.output, "w") as f:
-        json.dump(output, f, indent=2)
+        json.dump(result, f, indent=2)
 
 
 if __name__ == "__main__":

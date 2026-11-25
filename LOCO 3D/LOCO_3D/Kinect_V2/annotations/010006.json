@@ -35,7 +35,7 @@
           "z": 4.266
         },
         "dimensions": {
-          "height": 0.113,
+          "height": 0.135,
           "width": 0.8,
           "length": 1.2
         },
@@ -217,14 +217,14 @@
       "iscrowd": 0,
       "bbox_3d": {
         "center": {
-          "x": 1.715,
+          "x": 1.575,
           "y": 0.247,
-          "z": 1.899
+          "z": 1.869
         },
         "dimensions": {
-          "height": 0.075,
-          "width": 0.8,
-          "length": 1.2
+          "height": 0.144,
+          "width": 0.7,
+          "length": 1.0
         },
         "yaw": -0.12740903539558607,
         "rx": 0.0,
@@ -265,7 +265,7 @@
           "z": 4.53
         },
         "dimensions": {
-          "height": 0.132,
+          "height": 0.135,
           "width": 0.8,
           "length": 1.2
         },
@@ -308,7 +308,7 @@
           "z": 4.53
         },
         "dimensions": {
-          "height": 0.115,
+          "height": 0.135,
           "width": 0.8,
           "length": 1.2
         },
@@ -351,7 +351,7 @@
           "z": 4.53
         },
         "dimensions": {
-          "height": 0.058,
+          "height": 0.135,
           "width": 0.8,
           "length": 1.2
         },
@@ -398,7 +398,7 @@
           "z": 4.266
         },
         "dimensions": {
-          "height": 0.113,
+          "height": 0.135,
           "width": 0.8,
           "length": 1.2
         },
@@ -409,5 +409,5 @@
     }
   ],
   "annotated_by": "dan.vidal",
-  "annotated_at": "2026-11-06T12:08:28"
+  "annotated_at": "2026-11-25T12:40:41"
 }

@@ -256,13 +256,14 @@ def discover_methods(annotator_dir: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 class MethodRunWorker(QThread):
-    done  = pyqtSignal(str, dict, float)   # method_name, {frame_id: [preds]}, elapsed_s
-    error = pyqtSignal(str, str)           # method_name, error_message
+    done  = pyqtSignal(str, dict, float, dict)  # method_name, {frame_id: [preds]}, elapsed_s, timing
+    error = pyqtSignal(str, str)                # method_name, error_message
 
-    def __init__(self, method: dict, frames: list, parent=None):
+    def __init__(self, method: dict, frames: list, params: dict = None, parent=None):
         super().__init__(parent)
         self._method = method
         self._frames = frames
+        self._params = params or {}
 
     def run(self):
         t0 = time.time()
@@ -270,19 +271,21 @@ class MethodRunWorker(QThread):
             inp = os.path.join(tmp, "input.json")
             out = os.path.join(tmp, "output.json")
             with open(inp, "w") as f:
-                json.dump({"frames": self._frames}, f)
+                json.dump({"frames": self._frames, "params": self._params}, f)
             try:
                 proc = subprocess.run(
                     [sys.executable, self._method["_predict"],
                      "--input", inp, "--output", out],
                     capture_output=True, text=True, timeout=600,
                 )
+                if proc.stderr:
+                    print(proc.stderr, end="", file=sys.stderr)
                 if proc.returncode != 0:
                     self.error.emit(self._method["name"],
                                     proc.stderr[-2000:] or "Unknown error")
                     return
                 with open(out) as f:
-                    predictions = json.load(f)
+                    raw = json.load(f)
             except subprocess.TimeoutExpired:
                 self.error.emit(self._method["name"], "Timed out after 10 minutes")
                 return
@@ -290,7 +293,15 @@ class MethodRunWorker(QThread):
                 self.error.emit(self._method["name"], str(e))
                 return
         elapsed = time.time() - t0
-        self.done.emit(self._method["name"], predictions, elapsed)
+        # Support new format {"predictions": {...}, "_timing": {...}, "_elapsed": float}
+        if isinstance(raw, dict) and "predictions" in raw:
+            predictions = raw["predictions"]
+            timing = raw.get("_timing", {})
+            elapsed = raw.get("_elapsed", elapsed)  # use post-warmup time if available
+        else:
+            predictions = raw
+            timing = {}
+        self.done.emit(self._method["name"], predictions, elapsed, timing)
 
 
 # ---------------------------------------------------------------------------
