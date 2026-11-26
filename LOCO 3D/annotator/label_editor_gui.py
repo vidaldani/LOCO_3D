@@ -4208,7 +4208,11 @@ class LabelEditorWindow(QMainWindow):
                 self._dirty = True
                 # Reload the properties panel so spinboxes reflect the cleared values
                 if self._active_widget:
-                    self._active_widget.load_object(obj)
+                    self._clear_active_widget()
+                    widget = ObjectFieldWidget(row, obj, on_change=self._on_regenerate)
+                    self._fields_layout.addWidget(widget)
+                    self._active_widget = widget
+                    self._selected_obj_idx = row
                 self._render_scene()
                 self._update_status(f"Cleared 3D BB for '{obj['name']}' — mask kept")
             else:
