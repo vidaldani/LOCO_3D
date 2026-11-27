@@ -55,22 +55,7 @@
         ]
       ],
       "area": 72089,
-      "iscrowd": 0,
-      "bbox_3d": {
-        "center": {
-          "x": 0.0,
-          "y": 0.39484357425316086,
-          "z": 0.0
-        },
-        "dimensions": {
-          "height": 0.02595503325358145,
-          "width": 0.0,
-          "length": 0.0
-        },
-        "yaw": 0.0,
-        "rx": 0.0,
-        "rz": 0.0
-      }
+      "iscrowd": 0
     },
     {
       "id": 2,
@@ -94,22 +79,7 @@
         ]
       ],
       "area": 1749,
-      "iscrowd": 0,
-      "bbox_3d": {
-        "center": {
-          "x": 0.0,
-          "y": 0.4496793272831786,
-          "z": 0.0
-        },
-        "dimensions": {
-          "height": 0.00339153686338306,
-          "width": 0.0,
-          "length": 0.0
-        },
-        "yaw": 0.0,
-        "rx": 0.0,
-        "rz": 0.0
-      }
+      "iscrowd": 0
     },
     {
       "id": 3,
@@ -122,22 +92,9 @@
       ],
       "segmentation": [],
       "area": 1139,
-      "iscrowd": 0,
-      "bbox_3d": {
-        "center": {
-          "x": 0.0,
-          "y": 0.48387693543276594,
-          "z": 0.0
-        },
-        "dimensions": {
-          "height": 0.0,
-          "width": 0.0,
-          "length": 0.0
-        },
-        "yaw": 0.0,
-        "rx": 0.0,
-        "rz": 0.0
-      }
+      "iscrowd": 0
     }
-  ]
+  ],
+  "annotated_by": "mridhula",
+  "annotated_at": "2026-11-27T10:47:05"
 }
