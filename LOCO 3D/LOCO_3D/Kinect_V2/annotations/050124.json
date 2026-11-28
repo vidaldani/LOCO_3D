@@ -63,22 +63,7 @@
         ]
       ],
       "area": 11817,
-      "iscrowd": 0,
-      "bbox_3d": {
-        "center": {
-          "x": 0.0,
-          "y": -0.013100048275724651,
-          "z": 0.0
-        },
-        "dimensions": {
-          "height": 0.033177357169658174,
-          "width": 0.0,
-          "length": 0.0
-        },
-        "yaw": 0.0,
-        "rx": 0.0,
-        "rz": 0.0
-      }
+      "iscrowd": 0
     },
     {
       "id": 2,
@@ -130,22 +115,9 @@
         ]
       ],
       "area": 4556,
-      "iscrowd": 0,
-      "bbox_3d": {
-        "center": {
-          "x": 0.0,
-          "y": 0.0148436706600152,
-          "z": 0.0
-        },
-        "dimensions": {
-          "height": 0.0,
-          "width": 0.0,
-          "length": 0.0
-        },
-        "yaw": 0.0,
-        "rx": 0.0,
-        "rz": 0.0
-      }
+      "iscrowd": 0
     }
-  ]
+  ],
+  "annotated_by": "mridhula",
+  "annotated_at": "2026-11-27T11:27:21"
 }

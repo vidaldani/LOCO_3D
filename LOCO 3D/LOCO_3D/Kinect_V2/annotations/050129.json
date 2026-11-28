@@ -65,22 +65,9 @@
         ]
       ],
       "area": 18003,
-      "iscrowd": 0,
-      "bbox_3d": {
-        "center": {
-          "x": 0.0,
-          "y": -0.01889640047486329,
-          "z": 0.0
-        },
-        "dimensions": {
-          "height": 0.06550764451505399,
-          "width": 0.0,
-          "length": 0.0
-        },
-        "yaw": 0.0,
-        "rx": 0.0,
-        "rz": 0.0
-      }
+      "iscrowd": 0
     }
-  ]
+  ],
+  "annotated_by": "mridhula",
+  "annotated_at": "2026-11-27T11:32:46"
 }
